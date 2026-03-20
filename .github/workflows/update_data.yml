@@ -1,44 +1,35 @@
 name: Update parking data
 
 # Runs every Monday at 06:00 UTC
-# Also runs manually from the Actions tab (useful for first run)
+# Can also be triggered manually from the Actions tab
 on:
   schedule:
     - cron: '0 6 * * 1'
-  workflow_dispatch:       # ← allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   update:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Check out the repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 3. Install dependencies
       - name: Install dependencies
         run: |
-          pip install pyrosm geopandas scipy shapely
+          pip install osmnx geopandas scipy shapely numpy pandas
 
-      # 4. Fetch latest infraction data from API
-      - name: Fetch data from API
+      - name: Fetch latest infraction data from API
         run: python scripts/fetch_data.py
 
-      # 5. Run street matching (full Portugal)
-      #    PBF is downloaded fresh each run (~400MB, takes ~5 min)
-      #    If you want to cache it between runs, see the commented step below
       - name: Run street matching
         run: python scripts/street_match.py
 
-      # 6. Commit and push updated GeoJSONs back to the repo
-      #    GitHub Pages will automatically serve the new files
       - name: Commit updated data
         run: |
           git config user.name  "github-actions[bot]"
@@ -46,13 +37,3 @@ jobs:
           git add data/infractions.geojson data/streets_matched.geojson
           git diff --staged --quiet || git commit -m "chore: weekly data update $(date -u '+%Y-%m-%d')"
           git push
-
-# ── Optional: cache the PBF between runs to save ~5 min download ───────────
-# Uncomment the step below and add it BEFORE "Run street matching"
-#
-#      - name: Cache Portugal PBF
-#        uses: actions/cache@v4
-#        with:
-#          path: data/portugal-latest.osm.pbf
-#          key: portugal-pbf-${{ runner.os }}-${{ hashFiles('data/portugal-latest.osm.pbf') }}
-#          restore-keys: portugal-pbf-${{ runner.os }}-
