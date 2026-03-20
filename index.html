@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Illegal Parking in Portugal / Estacionamento Ilegal em Portugal</title>
+  <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #f0f0f0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── Banner ── */
+    #banner {
+      background: #1a1a2e;
+      border-bottom: 2px solid #e63946;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      z-index: 10;
+      flex-shrink: 0;
+    }
+    #banner .title { font-size: 1.05rem; font-weight: 700; color: #fff; line-height: 1.3; }
+    #banner .subtitle { font-size: 0.75rem; color: #aaa; margin-top: 2px; }
+    #banner .stats { display: flex; gap: 18px; flex-wrap: wrap; }
+    .stat { text-align: center; }
+    .stat .number { font-size: 1.3rem; font-weight: 800; color: #e63946; }
+    .stat .label { font-size: 0.65rem; color: #999; text-transform: uppercase; letter-spacing: 0.5px; }
+    .banner-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+    /* Language toggle */
+    #lang-toggle { display: flex; border: 1px solid #444; border-radius: 5px; overflow: hidden; font-size: 0.75rem; }
+    .lang-btn { padding: 5px 10px; background: #222; color: #aaa; border: none; cursor: pointer; font-weight: 600; transition: all 0.15s; }
+    .lang-btn.active { background: #e63946; color: #fff; }
+    .lang-btn:hover:not(.active) { background: #333; }
+
+    .survey-btn {
+      background: #e63946; color: white; border: none;
+      padding: 7px 14px; border-radius: 6px; font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; text-decoration: none; white-space: nowrap;
+    }
+    .survey-btn:hover { background: #c1121f; }
+
+    /* ── Controls bar ── */
+    #controls {
+      background: #111; border-bottom: 1px solid #222;
+      padding: 7px 16px; display: flex; gap: 14px;
+      align-items: center; flex-wrap: wrap; z-index: 10; flex-shrink: 0;
+    }
+    #controls label { font-size: 0.72rem; color: #888; display: flex; align-items: center; gap: 6px; }
+    #controls select { background: #222; border: 1px solid #333; color: #eee; padding: 4px 8px; border-radius: 4px; font-size: 0.78rem; }
+    .layer-toggle { display: flex; gap: 6px; }
+    .toggle-btn {
+      background: #222; border: 1px solid #333; color: #aaa;
+      padding: 4px 10px; border-radius: 4px; font-size: 0.72rem; cursor: pointer; transition: all 0.15s;
+    }
+    .toggle-btn.active { background: #e63946; border-color: #e63946; color: white; }
+    .toggle-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* ── Map ── */
+    #map-wrap { flex: 1; position: relative; overflow: hidden; }
+    #map { width: 100%; height: 100%; }
+
+    /* ── Hover tooltip (points only) ── */
+    #hover-tip {
+      position: absolute; background: rgba(18,18,28,0.96); border: 1px solid #333;
+      border-radius: 6px; padding: 9px 13px; font-size: 0.78rem;
+      pointer-events: none; z-index: 20; display: none; max-width: 240px; line-height: 1.5;
+    }
+    #hover-tip .tip-type { font-weight: 700; color: #e63946; margin-bottom: 3px; }
+    #hover-tip .tip-row { color: #ccc; }
+
+    /* ── Street panel (right drawer) ── */
+    #street-panel {
+      position: absolute; top: 0; right: 0; width: 300px; height: 100%;
+      background: #13131f; border-left: 1px solid #2a2a3a;
+      z-index: 15; display: flex; flex-direction: column;
+      transform: translateX(100%); transition: transform 0.25s ease; overflow: hidden;
+    }
+    #street-panel.open { transform: translateX(0); }
+
+    #panel-header { padding: 14px 16px 10px; border-bottom: 1px solid #2a2a3a; flex-shrink: 0; }
+    #panel-close {
+      float: right; background: none; border: none; color: #666;
+      font-size: 1.1rem; cursor: pointer; line-height: 1; padding: 0 0 0 8px;
+    }
+    #panel-close:hover { color: #fff; }
+    #panel-street-name { font-size: 0.95rem; font-weight: 700; color: #fff; margin-right: 24px; line-height: 1.3; }
+    #panel-meta { margin-top: 6px; font-size: 0.72rem; color: #666; }
+    #panel-total { margin-top: 4px; font-size: 0.75rem; color: #888; }
+    #panel-total strong { color: #e63946; font-size: 1rem; }
+
+    #panel-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+    #panel-body::-webkit-scrollbar { width: 4px; }
+    #panel-body::-webkit-scrollbar-track { background: #111; }
+    #panel-body::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+    .panel-section-title { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.8px; color: #555; margin-bottom: 10px; }
+
+    .breakdown-row { margin-bottom: 10px; }
+    .breakdown-label { display: flex; justify-content: space-between; font-size: 0.72rem; color: #bbb; margin-bottom: 3px; }
+    .breakdown-label .count { color: #e63946; font-weight: 700; flex-shrink: 0; margin-left: 8px; }
+    .breakdown-bar-bg { height: 5px; background: #222; border-radius: 3px; overflow: hidden; }
+    .breakdown-bar { height: 100%; background: #e63946; border-radius: 3px; transition: width 0.4s ease; }
+
+    #panel-footer { padding: 12px 16px; border-top: 1px solid #2a2a3a; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+    .panel-link {
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; font-weight: 600;
+      text-decoration: none; cursor: pointer; border: none;
+    }
+    .panel-link.gsv { background: #1a73e8; color: white; }
+    .panel-link.gsv:hover { background: #1557b0; }
+    .panel-link.osm { background: #222; border: 1px solid #333; color: #aaa; }
+    .panel-link.osm:hover { background: #2a2a2a; color: #fff; }
+
+    /* ── Legend ── */
+    #legend {
+      position: absolute; bottom: 36px; right: 10px;
+      background: rgba(15,15,15,0.92); border: 1px solid #333;
+      border-radius: 8px; padding: 11px 14px; font-size: 0.7rem; z-index: 5; display: none;
+    }
+    #legend h4 { font-size: 0.76rem; margin-bottom: 7px; color: #ddd; }
+    .legend-item { display: flex; align-items: center; gap: 7px; margin: 3px 0; color: #bbb; }
+    .legend-swatch { width: 28px; height: 5px; border-radius: 3px; flex-shrink: 0; }
+
+    /* ── Data note ── */
+    #data-note { position: absolute; bottom: 8px; left: 10px; font-size: 0.65rem; color: #555; z-index: 5; pointer-events: none; }
+    #data-note a { color: #4a9eff; text-decoration: none; pointer-events: all; }
+  </style>
+</head>
+<body>
+
+<!-- ── Banner ─────────────────────────────────────────────────────────── -->
+<div id="banner">
+  <div>
+    <div class="title" data-i18n="title">🚫 Illegal Parking in Portugal</div>
+    <div class="subtitle">
+      <span data-i18n="subtitle_pre">Crowdsourced via</span>
+      <a href="https://denuncia-estacionamento.app" target="_blank" style="color:#4a9eff">Denúncia Estacionamento</a>
+      · <span data-i18n="subtitle_post">Updated weekly</span>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat">
+      <div class="number" id="stat-total">—</div>
+      <div class="label" data-i18n="stat_reports">Reports</div>
+    </div>
+    <div class="stat">
+      <div class="number">2020–2026</div>
+      <div class="label" data-i18n="stat_period">Period</div>
+    </div>
+    <div class="stat">
+      <div class="number" id="stat-types">—</div>
+      <div class="label" data-i18n="stat_types">Types</div>
+    </div>
+  </div>
+  <div class="banner-right">
+    <div id="lang-toggle">
+      <button class="lang-btn active" onclick="setLang('en')">EN</button>
+      <button class="lang-btn" onclick="setLang('pt')">PT</button>
+    </div>
+    <a class="survey-btn" href="https://lisboaparticipa.pt/pt/mais-participacao/ilegal-parking/create" target="_blank">
+      📋 <span data-i18n="survey_btn">Take the Lisbon City Hall Survey →</span>
+    </a>
+  </div>
+</div>
+
+<!-- ── Controls ───────────────────────────────────────────────────────── -->
+<div id="controls">
+  <label>
+    <span data-i18n="filter_label">Infraction type:</span>
+    <select id="filter-type">
+      <option value="all" data-i18n="filter_all">All</option>
+    </select>
+  </label>
+  <label>
+    <span data-i18n="view_label">View:</span>
+    <div class="layer-toggle">
+      <button class="toggle-btn active" id="btn-heat"    onclick="setView('heat')"    data-i18n="view_heat">Heatmap</button>
+      <button class="toggle-btn"        id="btn-streets" onclick="setView('streets')" data-i18n="view_streets">By street</button>
+      <button class="toggle-btn"        id="btn-points"  onclick="setView('points')"  data-i18n="view_points">Points</button>
+    </div>
+  </label>
+</div>
+
+<!-- ── Map ────────────────────────────────────────────────────────────── -->
+<div id="map-wrap">
+  <div id="map"></div>
+
+  <div id="hover-tip"></div>
+
+  <!-- Street detail panel -->
+  <div id="street-panel">
+    <div id="panel-header">
+      <button id="panel-close" onclick="closePanel()">✕</button>
+      <div id="panel-street-name">—</div>
+      <div id="panel-meta"></div>
+      <div id="panel-total"></div>
+    </div>
+    <div id="panel-body">
+      <div class="panel-section-title" data-i18n="panel_breakdown">Reports by type</div>
+      <div id="breakdown-chart"></div>
+    </div>
+    <div id="panel-footer">
+      <a id="gsv-link" class="panel-link gsv" href="#" target="_blank">
+        🗺 <span data-i18n="panel_gsv">Open in Google Street View</span>
+      </a>
+      <a id="osm-link" class="panel-link osm" href="#" target="_blank">
+        🔗 <span data-i18n="panel_osm">View on OpenStreetMap</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div id="legend">
+    <h4 data-i18n="legend_title">Reports per street</h4>
+    <div class="legend-item"><div class="legend-swatch" style="background:#FFC300"></div> 1–5</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#FF5733"></div> 6–20</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#C70039"></div> 21–50</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#900C3F"></div> 51–100</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#5A1846"></div> 100+</div>
+  </div>
+
+  <div id="data-note">
+    <span data-i18n="source_label">Source:</span>
+    <a href="https://api.denuncia-estacionamento.app" target="_blank">api.denuncia-estacionamento.app</a>
+    · <span data-i18n="road_label">Road network:</span>
+    © <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap contributors</a>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// TRANSLATIONS
+// ════════════════════════════════════════════════════════════════════════════
+const T = {
+  en: {
+    title:           '🚫 Illegal Parking in Portugal',
+    subtitle_pre:    'Crowdsourced via',
+    subtitle_post:   'Updated weekly',
+    stat_reports:    'Reports',
+    stat_period:     'Period',
+    stat_types:      'Types',
+    survey_btn:      'Take the Lisbon City Hall Survey →',
+    filter_label:    'Infraction type:',
+    filter_all:      'All',
+    view_label:      'View:',
+    view_heat:       'Heatmap',
+    view_streets:    'By street',
+    view_points:     'Points',
+    panel_breakdown: 'Reports by type',
+    panel_gsv:       'Open in Google Street View',
+    panel_osm:       'View on OpenStreetMap',
+    panel_total:     (n) => `<strong>${n}</strong> reports on this street`,
+    panel_years:     (f, l) => f === l ? f : `${f}–${l}`,
+    panel_active:    'Active:',
+    panel_unnamed:   'Unnamed street',
+    legend_title:    'Reports per street',
+    source_label:    'Source:',
+    road_label:      'Road network:',
+    tip_at:          'at',
+    streets_soon:    'Street data not yet available (coming soon)',
+  },
+  pt: {
+    title:           '🚫 Estacionamento Ilegal em Portugal',
+    subtitle_pre:    'Dados crowdsourced via',
+    subtitle_post:   'Atualizado semanalmente',
+    stat_reports:    'Denúncias',
+    stat_period:     'Período',
+    stat_types:      'Tipos',
+    survey_btn:      'Responder ao Inquérito da CML →',
+    filter_label:    'Tipo de infração:',
+    filter_all:      'Todos',
+    view_label:      'Vista:',
+    view_heat:       'Mapa de calor',
+    view_streets:    'Por rua',
+    view_points:     'Pontos',
+    panel_breakdown: 'Denúncias por tipo',
+    panel_gsv:       'Abrir no Google Street View',
+    panel_osm:       'Ver no OpenStreetMap',
+    panel_total:     (n) => `<strong>${n}</strong> denúncias nesta rua`,
+    panel_years:     (f, l) => f === l ? f : `${f}–${l}`,
+    panel_active:    'Ativo:',
+    panel_unnamed:   'Rua sem nome',
+    legend_title:    'Denúncias por rua',
+    source_label:    'Fonte:',
+    road_label:      'Rede viária:',
+    tip_at:          'às',
+    streets_soon:    'Dados por rua ainda não disponíveis (em breve)',
+  }
+};
+
+const LABELS = {
+  en: {
+    passeios:                      'Pavement / sidewalk',
+    garagem:                       'In front of garage',
+    deficiente:                    'Disabled bay',
+    abandonado:                    'Abandoned vehicle',
+    na_passadeira:                 'On a crosswalk',
+    faixa_de_rodagem:              'On the carriageway',
+    residentes_apenas:             'Residents-only zone',
+    eletrico:                      'Tram stop',
+    praca_taxis:                   'Taxi rank',
+    passadeiras5m:                 'Within 5m of crosswalk',
+    segunda_fila:                  'Double-parked',
+    'linha_amarela_ou_contínua':   'Yellow / continuous line',
+    cargas_descargas:              'Loading zone',
+    'falta_de_espaço':             'No space / blocking traffic',
+    ciclovia:                      'Cycle lane',
+    paragem_tp:                    'Bus / transit stop',
+    cruzamento:                    'Junction / intersection',
+    sinal_estacionamento_proibido: 'No-parking sign',
+    carro_especifico:              'Specific vehicle',
+    motociclo:                     'Motorcycle zone',
+  },
+  pt: {
+    passeios:                      'Passeio pedonal',
+    garagem:                       'Frente de garagem',
+    deficiente:                    'Lugar de deficiente',
+    abandonado:                    'Veículo abandonado',
+    na_passadeira:                 'Numa passadeira',
+    faixa_de_rodagem:              'Faixa de rodagem',
+    residentes_apenas:             'Zona de residentes',
+    eletrico:                      'Paragem de elétrico',
+    praca_taxis:                   'Praça de táxis',
+    passadeiras5m:                 'A 5m de passadeira',
+    segunda_fila:                  'Segunda fila',
+    'linha_amarela_ou_contínua':   'Linha amarela/contínua',
+    cargas_descargas:              'Carga e descarga',
+    'falta_de_espaço':             'Falta de espaço',
+    ciclovia:                      'Ciclovia',
+    paragem_tp:                    'Paragem de transporte público',
+    cruzamento:                    'Cruzamento',
+    sinal_estacionamento_proibido: 'Sinal de estacionamento proibido',
+    carro_especifico:              'Veículo específico',
+    motociclo:                     'Lugar de motociclo',
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════════════════════
+let lang        = 'en';
+let allData     = null;
+let streetData  = null;
+let currentView = 'heat';
+let currentType = 'all';
+let typeList    = [];
+
+const POINTS_URL  = 'data/infractions.geojson';
+const STREETS_URL = 'data/streets_matched.geojson';
+
+const TYPE_COLORS = [
+  '#E6194B','#3CB44B','#4363D8','#F58231','#911EB4',
+  '#42D4F4','#F032E6','#BFEF45','#FABED4','#469990',
+  '#DCBEFF','#9A6324','#800000','#AAFFC3','#808000',
+  '#FFD8B1','#000075','#A9A9A9','#FF6347','#40E0D0',
+  '#EE82EE','#7CFC00','#FF1493','#1E90FF','#FFD700'
+];
+
+// ════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ════════════════════════════════════════════════════════════════════════════
+function t(key)   { return T[lang][key] || key; }
+function lbl(type) { return LABELS[lang][type] || type; }
+
+// ════════════════════════════════════════════════════════════════════════════
+// LANGUAGE
+// ════════════════════════════════════════════════════════════════════════════
+function setLang(l) {
+  lang = l;
+  document.documentElement.lang = l;
+
+  document.querySelectorAll('.lang-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent.trim().toLowerCase() === l);
+  });
+
+  // Re-render all static i18n nodes
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    if (typeof T[l][key] === 'string') el.textContent = T[l][key];
+  });
+
+  // Rebuild dropdown labels
+  const sel = document.getElementById('filter-type');
+  Array.from(sel.options).forEach(opt => {
+    opt.textContent = opt.value === 'all' ? T[l].filter_all : (LABELS[l][opt.value] || opt.value);
+  });
+
+  const streetBtn = document.getElementById('btn-streets');
+  if (streetBtn.disabled) streetBtn.title = T[l].streets_soon;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MAP INIT
+// ════════════════════════════════════════════════════════════════════════════
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  center: [-9.14, 38.72],
+  zoom: 11,
+  attributionControl: false
+});
+
+map.addControl(new maplibregl.NavigationControl(), 'top-right');
+map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+
+// ── Load data ──────────────────────────────────────────────────────────────
+map.on('load', async () => {
+  const [ptRes, stRes] = await Promise.allSettled([
+    fetch(POINTS_URL).then(r => r.ok ? r.json() : Promise.reject()),
+    fetch(STREETS_URL).then(r => r.ok ? r.json() : Promise.reject())
+  ]);
+
+  if (ptRes.status === 'fulfilled') {
+    allData = ptRes.value;
+    initPointsLayers();
+    populateFilters();
+    updateStats();
+  }
+
+  if (stRes.status === 'fulfilled') {
+    streetData = stRes.value;
+    initStreetLayer();
+  } else {
+    const btn = document.getElementById('btn-streets');
+    btn.disabled = true;
+    btn.title = t('streets_soon');
+  }
+
+  setView('heat');
+});
+
+// ── Points layers ──────────────────────────────────────────────────────────
+function initPointsLayers() {
+  map.addSource('points', { type: 'geojson', data: allData });
+
+  map.addLayer({
+    id: 'heatmap', type: 'heatmap', source: 'points', maxzoom: 16,
+    paint: {
+      'heatmap-weight': 1,
+      'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 1, 15, 3],
+      'heatmap-color': [
+        'interpolate', ['linear'], ['heatmap-density'],
+        0, 'rgba(0,0,0,0)', 0.2, '#5A1846', 0.4, '#900C3F',
+        0.6, '#C70039', 0.8, '#E3611C', 1, '#FFC300'
+      ],
+      'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 8, 12, 14, 30],
+      'heatmap-opacity': 0.85
+    }
+  });
+
+  map.addLayer({
+    id: 'points-circle', type: 'circle', source: 'points', minzoom: 13,
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, 3, 17, 7],
+      'circle-color': buildColorExpr(),
+      'circle-opacity': 0.8,
+      'circle-stroke-width': 0.5,
+      'circle-stroke-color': '#000'
+    }
+  });
+}
+
+// ── Street layers ──────────────────────────────────────────────────────────
+function initStreetLayer() {
+  map.addSource('streets', { type: 'geojson', data: streetData });
+
+  map.addLayer({
+    id: 'streets-line', type: 'line', source: 'streets',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: {
+      'line-color': ['step', ['get', 'count'], '#FFC300', 5, '#FF5733', 20, '#C70039', 50, '#900C3F', 100, '#5A1846'],
+      'line-width': ['interpolate', ['linear'], ['get', 'count'], 1, 1.5, 10, 3, 50, 5, 200, 9],
+      'line-opacity': 0.9
+    }
+  });
+
+  // White highlight for clicked segment
+  map.addLayer({
+    id: 'streets-highlight', type: 'line', source: 'streets',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.6 },
+    filter: ['==', ['id'], ''] // nothing highlighted initially
+  });
+
+  map.setLayoutProperty('streets-line', 'visibility', 'none');
+  map.setLayoutProperty('streets-highlight', 'visibility', 'none');
+}
+
+function buildColorExpr() {
+  if (!typeList.length) return '#e63946';
+  const expr = ['match', ['get', 'infraction_type']];
+  typeList.forEach((tp, i) => expr.push(tp, TYPE_COLORS[i % TYPE_COLORS.length]));
+  expr.push('#888');
+  return expr;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// VIEW SWITCHING
+// ════════════════════════════════════════════════════════════════════════════
+function setView(view) {
+  currentView = view;
+  ['heat','streets','points'].forEach(v =>
+    document.getElementById(`btn-${v}`).classList.toggle('active', v === view)
+  );
+
+  const vis = (id, show) => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', show ? 'visible' : 'none'); };
+  vis('heatmap',           view === 'heat');
+  vis('points-circle',     view === 'heat' || view === 'points');
+  vis('streets-line',      view === 'streets');
+  vis('streets-highlight', view === 'streets');
+
+  document.getElementById('legend').style.display = view === 'streets' ? 'block' : 'none';
+  if (view !== 'streets') closePanel();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FILTERS
+// ════════════════════════════════════════════════════════════════════════════
+function populateFilters() {
+  typeList = [...new Set(allData.features.map(f => f.properties.infraction_type))].sort();
+  const sel = document.getElementById('filter-type');
+  typeList.forEach(type => {
+    const opt = document.createElement('option');
+    opt.value = type;
+    opt.textContent = lbl(type);
+    sel.appendChild(opt);
+  });
+  sel.addEventListener('change', e => { currentType = e.target.value; applyFilter(); });
+}
+
+function applyFilter() {
+  const f = currentType === 'all' ? null : ['==', ['get', 'infraction_type'], currentType];
+  ['heatmap','points-circle'].forEach(l => { if (map.getLayer(l)) map.setFilter(l, f); });
+  if (map.getLayer('streets-line'))
+    map.setFilter('streets-line', currentType === 'all' ? null : ['==', ['get', 'top_infraction'], currentType]);
+  updateStats();
+}
+
+function updateStats() {
+  if (!allData) return;
+  const shown = currentType === 'all'
+    ? allData.features
+    : allData.features.filter(f => f.properties.infraction_type === currentType);
+  document.getElementById('stat-total').textContent = shown.length.toLocaleString();
+  document.getElementById('stat-types').textContent = typeList.length;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HOVER TOOLTIP (points only)
+// ════════════════════════════════════════════════════════════════════════════
+const hoverTip = document.getElementById('hover-tip');
+
+map.on('mouseenter', 'points-circle', () => map.getCanvas().style.cursor = 'pointer');
+map.on('mouseleave', 'points-circle', () => { map.getCanvas().style.cursor = ''; hoverTip.style.display = 'none'; });
+map.on('mouseenter', 'streets-line',  () => map.getCanvas().style.cursor = 'pointer');
+map.on('mouseleave', 'streets-line',  () => map.getCanvas().style.cursor = '');
+
+map.on('mousemove', 'points-circle', e => {
+  const p = e.features[0].properties;
+  hoverTip.innerHTML = `
+    <div class="tip-type">${lbl(p.infraction_type)}</div>
+    <div class="tip-row">📅 ${(p.data_data || '').substring(0,10)} ${t('tip_at')} ${p.data_hora || '—'}</div>
+    <div class="tip-row">🚔 ${p.autoridade || '—'}</div>
+  `;
+  hoverTip.style.display = 'block';
+  hoverTip.style.left = (e.point.x + 14) + 'px';
+  hoverTip.style.top  = (e.point.y - 10) + 'px';
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// STREET PANEL (click → right drawer)
+// ════════════════════════════════════════════════════════════════════════════
+map.on('click', 'streets-line', e => {
+  const feat   = e.features[0];
+  const p      = feat.properties;
+  const lngLat = e.lngLat;
+
+  // Highlight the clicked segment
+  if (map.getLayer('streets-highlight'))
+    map.setFilter('streets-highlight', ['==', ['id'], feat.id ?? '']);
+
+  // Parse type breakdown (stored as JSON string by street_match.py)
+  let breakdown = {};
+  try { breakdown = JSON.parse(p.type_breakdown || '{}'); } catch (_) {}
+  const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
+  const max    = sorted.length ? sorted[0][1] : 1;
+
+  // Header
+  document.getElementById('panel-street-name').textContent = p.street_name || t('panel_unnamed');
+  document.getElementById('panel-total').innerHTML = T[lang].panel_total(p.count);
+  document.getElementById('panel-meta').textContent =
+    (p.first_year && p.last_year)
+      ? `${t('panel_active')} ${T[lang].panel_years(p.first_year, p.last_year)}`
+      : '';
+
+  // Breakdown bars
+  document.getElementById('breakdown-chart').innerHTML = sorted.map(([type, count]) => `
+    <div class="breakdown-row">
+      <div class="breakdown-label">
+        <span>${lbl(type)}</span>
+        <span class="count">${count}</span>
+      </div>
+      <div class="breakdown-bar-bg">
+        <div class="breakdown-bar" style="width:${Math.round(100 * count / max)}%"></div>
+      </div>
+    </div>
+  `).join('');
+
+  // Re-render i18n labels inside panel
+  document.querySelectorAll('#street-panel [data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    if (typeof T[lang][key] === 'string') el.textContent = T[lang][key];
+  });
+
+  // Google Street View — viewpoint at the exact click location
+  document.getElementById('gsv-link').href =
+    `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lngLat.lat},${lngLat.lng}`;
+
+  // OpenStreetMap — zoom 18 centred on click
+  document.getElementById('osm-link').href =
+    `https://www.openstreetmap.org/#map=18/${lngLat.lat.toFixed(6)}/${lngLat.lng.toFixed(6)}`;
+
+  openPanel();
+});
+
+// Clicking empty space closes the panel and clears highlight
+map.on('click', e => {
+  const hits = map.queryRenderedFeatures(e.point, { layers: ['streets-line', 'points-circle'] });
+  if (!hits.length) {
+    closePanel();
+    hoverTip.style.display = 'none';
+    if (map.getLayer('streets-highlight'))
+      map.setFilter('streets-highlight', ['==', ['id'], '']);
+  }
+});
+
+function openPanel()  { document.getElementById('street-panel').classList.add('open'); }
+function closePanel() {
+  document.getElementById('street-panel').classList.remove('open');
+  if (map.getLayer('streets-highlight'))
+    map.setFilter('streets-highlight', ['==', ['id'], '']);
+}
+</script>
+</body>
+</html>
