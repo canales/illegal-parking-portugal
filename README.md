@@ -2,7 +2,7 @@
 
 A public map of illegal parking reports in Portugal, crowdsourced via the [Denúncia Estacionamento](https://denuncia-estacionamento.app/) app.
 
-**→ [View live map](https://YOUR_USERNAME.github.io/estacionamento-abusivo)**
+**→ [View live map](https://canales.github.io/illegal-parking-portugal)**
 
 ---
 
