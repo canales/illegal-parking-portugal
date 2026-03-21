@@ -1,18 +1,17 @@
 name: Update parking data
 
-# Runs every Monday at 06:00 UTC
-# Can also be triggered manually from the Actions tab
 on:
   schedule:
-    - cron: '0 6 * * 1'
-  workflow_dispatch:
+    - cron: '0 6 * * 1'   # Every Monday 06:00 UTC
+  workflow_dispatch:        # Manual trigger from Actions tab
 
 permissions:
-  contents: write
+  contents: write           # Allows the bot to push commits back
 
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 120    # 2h cap — first run ~60min, subsequent ~10min
 
     steps:
       - name: Checkout repository
@@ -24,13 +23,28 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install osmnx==2.0.1 geopandas scipy shapely numpy pandas
+        run: pip install osmnx==2.0.1 geopandas scipy shapely numpy pandas pyogrio
+
+      # Restore the OSM network cache from previous runs.
+      # Cache key includes the month so it auto-refreshes once a month,
+      # picking up any OSM road edits without manual intervention.
+      - name: Restore OSM network cache
+        uses: actions/cache@v4
+        with:
+          path: data/osm_cache
+          key: osm-cache-${{ runner.os }}-${{ steps.date.outputs.month }}
+          restore-keys: |
+            osm-cache-${{ runner.os }}-
+
+      # Capture current month for cache key
+      - name: Get current month
+        id: date
+        run: echo "month=$(date +'%Y-%m')" >> $GITHUB_OUTPUT
 
       - name: Fetch latest infraction data from API
         run: python scripts/fetch_data.py
 
-      - name: Run street matching
+      - name: Run street matching (grid, with cache)
         run: python scripts/street_match.py
 
       - name: Commit updated data
