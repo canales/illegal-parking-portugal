@@ -1,0 +1,14 @@
+# Mac system files
+.DS_Store
+.github/.DS_Store
+
+# OSM network cache — preserved by GitHub Actions cache, not git
+data/osm_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local data experiments
+*.tmp
