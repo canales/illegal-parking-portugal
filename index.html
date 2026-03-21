@@ -667,6 +667,10 @@ function initAllLayers() {
 }
 
 // ── Style switcher ─────────────────────────────────────────────────────────
+// IDs of our custom sources and layers — everything that isn't part of the basemap.
+const _CUSTOM_SOURCES = ['points', 'hexbins', 'streets'];
+const _CUSTOM_LAYERS  = ['heatmap', 'points-circle', 'hex-extrusion', 'streets-line', 'streets-highlight'];
+
 function setMapStyle(styleKey) {
   currentStyle = styleKey;
   const isLight = LIGHT_STYLES.has(styleKey);
@@ -679,21 +683,40 @@ function setMapStyle(styleKey) {
   document.getElementById('timeline-bar').style.borderTopColor =
     isLight ? '#ccc' : '#2a2a3a';
 
-  // Swap the basemap. setStyle() destroys all custom layers/sources.
+  // Swap the basemap while preserving our data layers.
   //
-  // Neither 'load' (fires only on initial page load) nor 'style.load'
-  // (broken for URL-based setStyle in MapLibre ≤4.x) reliably re-fires.
-  // Instead we poll isStyleLoaded() via requestAnimationFrame — it
-  // resolves within 1–3 frames after the style finishes parsing and is
-  // immune to event-timing bugs across MapLibre versions.
-  map.setStyle(MAP_STYLES[styleKey]);
-  (function waitAndInit() {
-    if (map.isStyleLoaded()) {
-      initAllLayers();
-    } else {
-      requestAnimationFrame(waitAndInit);
+  // Neither 'load' nor 'style.load' reliably re-fires after setStyle()
+  // for URL-based styles in MapLibre 4.x. The documented solution is
+  // transformStyle: it receives the previous (serialized) and incoming
+  // styles, letting us inject our custom sources/layers into the new
+  // basemap BEFORE it's committed. The layers survive the swap — no
+  // destroy-and-recreate cycle, no events, no polling.
+  // Ref: https://github.com/maplibre/maplibre-gl-js/discussions/2716
+  map.setStyle(MAP_STYLES[styleKey], {
+    diff: false,
+    transformStyle: (previousStyle, nextStyle) => {
+      if (!previousStyle) return nextStyle;
+
+      // Carry our GeoJSON sources into the new basemap
+      const mergedSources = { ...nextStyle.sources };
+      for (const id of _CUSTOM_SOURCES) {
+        if (previousStyle.sources && previousStyle.sources[id]) {
+          mergedSources[id] = previousStyle.sources[id];
+        }
+      }
+
+      // Carry our data layers — appended after all basemap layers
+      // so they render on top of the base tiles
+      const keptLayers = (previousStyle.layers || [])
+        .filter(l => _CUSTOM_LAYERS.includes(l.id));
+
+      return {
+        ...nextStyle,
+        sources: mergedSources,
+        layers: [...(nextStyle.layers || []), ...keptLayers]
+      };
     }
-  })();
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
