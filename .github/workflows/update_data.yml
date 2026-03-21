@@ -49,4 +49,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/infractions.geojson data/streets_matched.geojson
           git diff --staged --quiet || git commit -m "chore: weekly data update $(date -u '+%Y-%m-%d')"
+          git pull --rebase origin main
           git push
