@@ -229,6 +229,57 @@
     .stats-row-label .s-pct   { color: #555; font-size: 0.62rem; flex-shrink: 0; margin-left: 4px; }
     .stats-bar-bg { height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
     .stats-bar    { height: 100%; border-radius: 2px; transition: width 0.35s ease; }
+
+    /* ── Rankings panel ─────────────────────────────────────────────────── */
+    #rankings-panel {
+      position: absolute; top: 10px; left: 10px; width: 220px;
+      background: rgba(13,13,22,0.92); border: 1px solid #2a2a3a;
+      border-radius: 8px; z-index: 8; overflow: hidden;
+      /* Positioned below stats panel via JS (top updated dynamically) */
+    }
+    #rankings-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 11px; cursor: pointer; user-select: none;
+    }
+    #rankings-header span { font-size: 0.7rem; font-weight: 700; color: #ccc; text-transform: uppercase; letter-spacing: 0.6px; }
+    #rankings-toggle { font-size: 0.65rem; color: #555; transition: transform 0.2s; }
+    #rankings-panel.collapsed #rankings-toggle { transform: rotate(-90deg); }
+    #rankings-body { padding: 6px 11px 10px; }
+    #rankings-panel.collapsed #rankings-body { display: none; }
+
+    /* Mode toggle */
+    #rankings-mode {
+      display: flex; margin-bottom: 8px; border: 1px solid #2a2a3a;
+      border-radius: 4px; overflow: hidden;
+    }
+    .rmode-btn {
+      flex: 1; padding: 3px 0; font-size: 0.62rem; font-weight: 600;
+      text-align: center; cursor: pointer; background: #111; color: #555;
+      border: none; transition: all 0.15s;
+    }
+    .rmode-btn.active { background: #e63946; color: #fff; }
+
+    /* Infraction filter inside rankings */
+    #rankings-type-filter {
+      width: 100%; background: #111; border: 1px solid #2a2a3a;
+      color: #aaa; padding: 3px 6px; border-radius: 4px;
+      font-size: 0.68rem; margin-bottom: 8px;
+    }
+
+    /* Scrollable list */
+    #rankings-list {
+      max-height: 260px; overflow-y: auto;
+    }
+    #rankings-list::-webkit-scrollbar { width: 3px; }
+    #rankings-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    .rank-row { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; }
+    .rank-num  { font-size: 0.6rem; color: #444; min-width: 14px; text-align: right; flex-shrink: 0; }
+    .rank-bar-wrap { flex: 1; }
+    .rank-name { font-size: 0.67rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .rank-meta { display: flex; gap: 4px; align-items: center; }
+    .rank-bar-bg { flex: 1; height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
+    .rank-bar    { height: 100%; background: #e63946; border-radius: 2px; }
+    .rank-val    { font-size: 0.65rem; color: #e63946; font-weight: 700; flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -357,6 +408,24 @@
     </div>
   </div>
 
+  <!-- Rankings panel -->
+  <div id="rankings-panel" class="collapsed">
+    <div id="rankings-header" onclick="toggleRankings()">
+      <span data-i18n="rankings_title">City rankings</span>
+      <span id="rankings-toggle">▾</span>
+    </div>
+    <div id="rankings-body">
+      <div id="rankings-mode">
+        <button class="rmode-btn active" id="rmode-total"  onclick="setRankMode('total')"  data-i18n="rmode_total">Total</button>
+        <button class="rmode-btn"        id="rmode-perkm"  onclick="setRankMode('perkm')"  data-i18n="rmode_perkm">Per km road</button>
+      </div>
+      <select id="rankings-type-filter" onchange="renderRankings()">
+        <option value="all" data-i18n="filter_all">All</option>
+      </select>
+      <div id="rankings-list"></div>
+    </div>
+  </div>
+
   <!-- Timeline bar -->
   <div id="timeline-bar">
     <button id="play-btn" onclick="togglePlay()" title="Play / Pause">▶</button>
@@ -417,6 +486,9 @@ const T = {
     style_label:     'Basemap:',
     stats_title:     'Top infractions',
     opacity_label:   'Opacity:',
+    rankings_title:  'City rankings',
+    rmode_total:     'Total',
+    rmode_perkm:     'Per km road',
     month_names:     ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   },
   pt: {
@@ -452,6 +524,9 @@ const T = {
     style_label:     'Mapa base:',
     stats_title:     'Principais infrações',
     opacity_label:   'Opacidade:',
+    rankings_title:  'Ranking de cidades',
+    rmode_total:     'Total',
+    rmode_perkm:     'Por km de via',
     month_names:     ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'],
   }
 };
@@ -633,6 +708,7 @@ function setLang(l) {
     const filtered = getFilteredFeatures();
     updateFilterCounts(filtered);
     updateStatsPanel(filtered);
+    updateRankingsLang();
   }
 }
 
@@ -671,6 +747,7 @@ map.on('load', async () => {
 
   initAllLayers();
   updateStats();
+  if (allData) initRankings();
 });
 
 // ── Re-add all layers (called on initial load and after every style swap) ──
@@ -1196,7 +1273,166 @@ function closePointPopup() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// VIEWPORT-REACTIVE STATS PANEL
+// CITY RANKINGS
+// ════════════════════════════════════════════════════════════════════════════
+
+// Build municipality → {total, byType} aggregations from allData.
+// Relies on the `municipio` property written by fetch_data.py's spatial join
+// against data/municipios.geojson — no authority string parsing needed.
+function buildMunicipalityStats() {
+  const stats = {};
+  allData.features.forEach(f => {
+    const muni = f.properties.municipio;
+    if (!muni) return;  // null = outside all polygons (bad GPS), skip
+    const type = f.properties.infraction_type;
+    if (!stats[muni]) stats[muni] = { total: 0, byType: {} };
+    stats[muni].total++;
+    stats[muni].byType[type] = (stats[muni].byType[type] || 0) + 1;
+  });
+  return stats;
+}
+
+// Compute total road length (km) per municipality from streetData geometries.
+// Each segment's midpoint is matched to the nearest infraction point's
+// municipio tag — fast approximation within 0.05°.
+function computeRoadLengthPerMunicipality() {
+  if (!streetData) return {};
+  const lengths = {};
+
+  function haversine([lon1, lat1], [lon2, lat2]) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  streetData.features.forEach(f => {
+    const coords = f.geometry.coordinates;
+    if (!coords || coords.length < 2) return;
+    const mid = coords[Math.floor(coords.length / 2)];
+    const [mlon, mlat] = mid;
+
+    const nearby = allData.features.find(pt => {
+      const [plon, plat] = pt.geometry.coordinates;
+      return pt.properties.municipio &&
+             Math.abs(plon - mlon) < 0.05 && Math.abs(plat - mlat) < 0.05;
+    });
+    if (!nearby) return;
+    const muni = nearby.properties.municipio;
+
+    let segLen = 0;
+    for (let i = 0; i < coords.length - 1; i++) {
+      segLen += haversine(coords[i], coords[i+1]);
+    }
+    lengths[muni] = (lengths[muni] || 0) + segLen;
+  });
+
+  return lengths;
+}
+
+let rankMode          = 'total';
+let muniStats         = null;
+let muniRoadLengths   = null;
+
+function initRankings() {
+  muniStats       = buildMunicipalityStats();
+  muniRoadLengths = computeRoadLengthPerMunicipality();
+
+  // Populate infraction type filter inside rankings
+  const sel = document.getElementById('rankings-type-filter');
+  typeList.forEach(type => {
+    const opt = document.createElement('option');
+    opt.value = type;
+    opt.textContent = lbl(type);
+    sel.appendChild(opt);
+  });
+
+  positionRankingsPanel();
+  renderRankings();
+}
+
+function setRankMode(mode) {
+  rankMode = mode;
+  document.getElementById('rmode-total').classList.toggle('active', mode === 'total');
+  document.getElementById('rmode-perkm').classList.toggle('active', mode === 'perkm');
+  renderRankings();
+}
+
+function renderRankings() {
+  if (!muniStats) return;
+  const typeFilter = document.getElementById('rankings-type-filter').value;
+
+  // Build ranked list
+  let rows = Object.entries(muniStats)
+    .filter(([muni]) => muni !== 'Other')
+    .map(([muni, s]) => {
+      const count = typeFilter === 'all' ? s.total : (s.byType[typeFilter] || 0);
+      const roadKm = muniRoadLengths[muni] || 1;
+      const value  = rankMode === 'perkm'
+        ? parseFloat((count / roadKm).toFixed(2))
+        : count;
+      return { muni, count, value, roadKm };
+    })
+    .filter(r => r.count > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const maxVal = rows.length ? rows[0].value : 1;
+
+  // Show up to 15 rows (list is scrollable for the rest)
+  const display = rows.slice(0, Math.min(rows.length, 15));
+
+  document.getElementById('rankings-list').innerHTML = display.map((r, i) => {
+    const barPct = Math.round(100 * r.value / maxVal);
+    const valStr = rankMode === 'perkm'
+      ? r.value.toFixed(2)
+      : r.count.toLocaleString();
+    return `
+      <div class="rank-row">
+        <div class="rank-num">${i + 1}</div>
+        <div class="rank-bar-wrap">
+          <div class="rank-name" title="${r.muni}">${r.muni}</div>
+          <div class="rank-meta">
+            <div class="rank-bar-bg"><div class="rank-bar" style="width:${barPct}%"></div></div>
+            <div class="rank-val">${valStr}</div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function toggleRankings() {
+  const panel = document.getElementById('rankings-panel');
+  panel.classList.toggle('collapsed');
+  positionRankingsPanel();
+}
+
+// Position rankings panel below stats panel dynamically
+function positionRankingsPanel() {
+  const stats    = document.getElementById('stats-panel');
+  const rankings = document.getElementById('rankings-panel');
+  const statsBottom = stats.getBoundingClientRect().bottom;
+  const mapTop      = document.getElementById('map-wrap').getBoundingClientRect().top;
+  rankings.style.top = (statsBottom - mapTop + 8) + 'px';
+}
+
+// Re-position when stats panel collapses/expands
+const _origToggleStats = window.toggleStats;
+function toggleStats() {
+  if (_origToggleStats) _origToggleStats();
+  else document.getElementById('stats-panel').classList.toggle('collapsed');
+  setTimeout(positionRankingsPanel, 220); // wait for CSS transition
+}
+
+// Update rankings dropdown labels when language changes
+function updateRankingsLang() {
+  const sel = document.getElementById('rankings-type-filter');
+  Array.from(sel.options).forEach(opt => {
+    opt.textContent = opt.value === 'all' ? T[lang].filter_all : (LABELS[lang][opt.value] || opt.value);
+  });
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 function updateViewportStats() {
   const bounds = map.getBounds();

@@ -4,10 +4,13 @@ fetch_data.py
 Fetches all infraction records from api.denuncia-estacionamento.app
 and saves a clean GeoJSON to data/infractions.geojson.
 
-Runs as a standalone script (no QGIS dependency).
-Called by GitHub Actions weekly, or run locally anytime.
+Also performs a spatial join against data/municipios.geojson to tag
+every point with its municipality name in the `municipio` property.
+This is done for ALL records every run (re-assignment is idempotent
+and takes ~5s with GeoPandas).
 
 Usage:
+    pip install geopandas pyogrio shapely
     python scripts/fetch_data.py
 """
 
@@ -18,15 +21,15 @@ import urllib.parse
 from datetime import datetime, timezone
 
 # ── Paths ──────────────────────────────────────────────────────────────────
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SAVE_PATH = os.path.join(ROOT, 'data', 'infractions.geojson')
+ROOT       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SAVE_PATH  = os.path.join(ROOT, 'data', 'infractions.geojson')
+MUNIS_PATH = os.path.join(ROOT, 'data', 'municipios.geojson')
 
 # ── API ────────────────────────────────────────────────────────────────────
-API_BASE_URL      = "https://api.denuncia-estacionamento.app/penalties/"
+API_BASE_URL       = "https://api.denuncia-estacionamento.app/penalties/"
 PENALTIES_LIST_URL = "https://api.denuncia-estacionamento.app/penalties_list"
 
-# ── Portugal bounding box — filter out bad GPS coordinates ─────────────────
-# Mainland + Madeira + Azores covered by generous bbox
+# ── Portugal bounding box ──────────────────────────────────────────────────
 LAT_MIN, LAT_MAX = 29.0, 43.0
 LON_MIN, LON_MAX = -32.0, -6.0
 
@@ -38,12 +41,10 @@ def fetch_json(url: str) -> dict:
 
 
 def is_valid_coord(lat: float, lon: float) -> bool:
-    """Reject coordinates outside Portugal (catches bad GPS readings)."""
     return LAT_MIN <= lat <= LAT_MAX and LON_MIN <= lon <= LON_MAX
 
 
-def load_existing() -> tuple[list, set]:
-    """Load existing GeoJSON, return (features list, seen_keys set)."""
+def load_existing():
     if not os.path.exists(SAVE_PATH):
         print("No existing file found — starting fresh.")
         return [], set()
@@ -54,13 +55,64 @@ def load_existing() -> tuple[list, set]:
             seen = set()
             for feat in features:
                 coords = feat["geometry"]["coordinates"]
-                date  = feat["properties"].get("data_data", "")
+                date   = feat["properties"].get("data_data", "")
                 seen.add(f"{coords[0]}_{coords[1]}_{date}")
             print(f"Loaded {len(features)} existing records.")
             return features, seen
         except Exception as e:
             print(f"Could not parse existing file ({e}) — starting fresh.")
             return [], set()
+
+
+def assign_municipios(features: list) -> list:
+    """
+    Spatial join: tag every feature with its municipality name.
+    Uses GeoPandas sjoin for speed (~5s for 16k points).
+    Falls back gracefully if municipios.geojson is missing.
+    """
+    if not os.path.exists(MUNIS_PATH):
+        print("⚠  municipios.geojson not found — skipping municipality assignment.")
+        print("   Commit data/municipios.geojson to enable city rankings.")
+        return features
+
+    try:
+        import geopandas as gpd
+        from shapely.geometry import Point
+    except ImportError:
+        print("⚠  geopandas not installed — skipping municipality assignment.")
+        return features
+
+    print("Assigning municipalities via spatial join...")
+
+    munis = gpd.read_file(MUNIS_PATH)[['geometry', 'NAME_2']].copy()
+    munis = munis.rename(columns={'NAME_2': 'municipio'})
+    munis = munis.to_crs("EPSG:4326")
+
+    # Build points GeoDataFrame
+    lons = [f["geometry"]["coordinates"][0] for f in features]
+    lats = [f["geometry"]["coordinates"][1] for f in features]
+    pts  = gpd.GeoDataFrame(
+        {'idx': range(len(features))},
+        geometry=[Point(lon, lat) for lon, lat in zip(lons, lats)],
+        crs="EPSG:4326"
+    )
+
+    joined = gpd.sjoin(pts, munis, how='left', predicate='within')
+
+    # Write municipio back into features
+    muni_by_idx = joined.set_index('idx')['municipio'].to_dict()
+    assigned = unassigned = 0
+    for i, feat in enumerate(features):
+        m = muni_by_idx.get(i)
+        if isinstance(m, str) and m:
+            feat["properties"]["municipio"] = m
+            assigned += 1
+        else:
+            feat["properties"]["municipio"] = None
+            unassigned += 1
+
+    print(f"  {assigned} points assigned, {unassigned} outside all municipality polygons.")
+    return features
 
 
 def main():
@@ -104,7 +156,6 @@ def main():
             except ValueError:
                 continue
 
-            # Filter out-of-Portugal GPS noise
             if not is_valid_coord(lat_f, lon_f):
                 skipped_geo += 1
                 continue
@@ -130,14 +181,15 @@ def main():
 
     print(f"\nFinished. {new_count} new records added. {skipped_geo} out-of-Portugal coords skipped.")
 
-    if new_count > 0 or not os.path.exists(SAVE_PATH):
-        os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
-        with open(SAVE_PATH, 'w', encoding='utf-8') as f:
-            json.dump({"type": "FeatureCollection", "features": features}, f,
-                      ensure_ascii=False)
-        print(f"Saved {len(features)} total records → {SAVE_PATH}")
-    else:
-        print("No new records. File unchanged.")
+    # 3. Spatial join — assign municipio to ALL records every run
+    features = assign_municipios(features)
+
+    # 4. Save
+    os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
+    with open(SAVE_PATH, 'w', encoding='utf-8') as f:
+        json.dump({"type": "FeatureCollection", "features": features}, f,
+                  ensure_ascii=False)
+    print(f"Saved {len(features)} total records → {SAVE_PATH}")
 
 
 if __name__ == "__main__":
