@@ -2,8 +2,8 @@ name: Update parking data
 
 on:
   schedule:
-    - cron: '0 6 * * 1'   # Every Monday 06:00 UTC
-  workflow_dispatch:        # Manual trigger from Actions tab
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,7 +11,7 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # 6h cap — first run needs ~90min, cache runs ~10min
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
@@ -25,23 +25,29 @@ jobs:
       - name: Install dependencies
         run: pip install osmnx==2.0.1 geopandas shapely pandas pyogrio
 
-      # Cache key uses a hardcoded month expression evaluated at job start.
-      # save-always: true ensures the cache is saved even if later steps fail
-      # or the job times out — so progress is never lost between runs.
-      - name: Cache OSM network files
-        uses: actions/cache@v4
+      # RESTORE — load cached OSM network files if they exist
+      - name: Restore OSM cache
+        id: osm-cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: data/osm_cache
-          key: osm-cache-${{ runner.os }}-${{ hashFiles('data/osm_cache/**') }}
+          key: osm-cache-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             osm-cache-${{ runner.os }}-
-          save-always: true
 
       - name: Fetch latest infraction data from API
         run: python scripts/fetch_data.py
 
       - name: Run street matching (grid, with cache)
         run: python scripts/street_match.py
+
+      # SAVE — always save the cache after the run, even if street_match failed
+      - name: Save OSM cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/osm_cache
+          key: osm-cache-${{ runner.os }}-${{ github.run_id }}
 
       - name: Commit updated data
         run: |
