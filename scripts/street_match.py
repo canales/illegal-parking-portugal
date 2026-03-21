@@ -292,10 +292,37 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: flo
     return agg, len(snapped), edges_proj  # return edges_proj so build_features uses same index
 
 
-def build_features(edges_proj: gpd.GeoDataFrame, agg: dict) -> list:
+def load_municipios() -> 'gpd.GeoDataFrame | None':
+    """Load municipality boundaries for spatial join. Returns None if missing."""
+    munis_path = ROOT / 'data' / 'municipios.geojson'
+    if not munis_path.exists():
+        print("⚠  municipios.geojson not found — street municipio tags will be skipped.")
+        return None
+    try:
+        munis = gpd.read_file(str(munis_path))[['geometry', 'NAME_2']].copy()
+        munis = munis.rename(columns={'NAME_2': 'municipio'})
+        return munis.to_crs("EPSG:4326")
+    except Exception as e:
+        print(f"⚠  Could not load municipios.geojson ({e}) — skipping municipio tags.")
+        return None
+
+
+def build_features(edges_proj: gpd.GeoDataFrame, agg: dict, munis: 'gpd.GeoDataFrame | None') -> list:
     # edges_proj already has a reset integer index from snap_and_aggregate.
     # Convert back to WGS84 for the output GeoJSON.
     edges_wgs = edges_proj.to_crs("EPSG:4326")
+
+    # Spatial join: tag each edge with its municipality using midpoint
+    muni_by_edge = {}
+    if munis is not None:
+        try:
+            mids = edges_wgs.copy()
+            mids['geometry'] = edges_wgs.geometry.interpolate(0.5, normalized=True)
+            joined = gpd.sjoin(mids[['geometry']], munis, how='left', predicate='within')
+            muni_by_edge = joined['municipio'].to_dict()
+        except Exception as e:
+            print(f"    ⚠  municipio join failed ({e})")
+
     features  = []
     for edge_idx, stats in agg.items():
         try:
@@ -306,11 +333,14 @@ def build_features(edges_proj: gpd.GeoDataFrame, agg: dict) -> list:
             name = row.get('name') if hasattr(row, 'get') else None
             if isinstance(name, float): name = None
             if isinstance(name, list):  name = name[0]
+            muni = muni_by_edge.get(edge_idx)
+            if not isinstance(muni, str): muni = None
             features.append({
                 "type": "Feature",
                 "geometry": geom.__geo_interface__,
                 "properties": {
                     "street_name":    name,
+                    "municipio":      muni,
                     "count":          stats['count'],
                     "top_infraction": stats['top_infraction'],
                     "first_year":     stats['first_year'],
@@ -334,6 +364,7 @@ def main():
 
     df_all = load_infractions()
     grid   = build_grid(df_all)
+    munis  = load_municipios()
 
     # Filter to a single test cell if requested
     if args.cell:
@@ -366,7 +397,7 @@ def main():
             continue
 
         agg, snapped, edges_proj = snap_and_aggregate(df_cell, edges, clon)
-        features = build_features(edges_proj, agg)
+        features = build_features(edges_proj, agg, munis)
         all_features.extend(features)
         print(f"  {snapped}/{len(df_cell)} snapped → {len(features)} segments")
         succeeded += 1
