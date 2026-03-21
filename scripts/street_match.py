@@ -23,7 +23,7 @@ Later runs: ~2–4 min (snap only, no network calls).
 
 Usage
 ─────
-    pip install osmnx==2.0.1 geopandas scipy shapely numpy pandas pyogrio
+    pip install osmnx==2.0.1 geopandas shapely pandas pyogrio
     python scripts/street_match.py
 
     # Force re-fetch all cells from Overpass (e.g. after OSM updates)
@@ -36,16 +36,16 @@ Usage
 import os
 import json
 import time
+import math
 import signal
 import argparse
 from collections import Counter
+from typing import Optional
 from pathlib import Path
 
 import osmnx as ox
 import geopandas as gpd
 import pandas as pd
-from scipy.spatial import cKDTree
-import numpy as np
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 ROOT       = Path(__file__).resolve().parent.parent
@@ -96,11 +96,20 @@ def _disarm_timeout():
 
 
 # ── Grid helpers ───────────────────────────────────────────────────────────
-def cell_origin(lat: float, lon: float) -> tuple[float, float]:
-    """Return the bottom-left corner of the 0.1° cell containing (lat, lon)."""
+def cell_origin(lat: float, lon: float) -> tuple:
+    """
+    Return the bottom-left corner of the 0.1° cell containing (lat, lon).
+
+    IMPORTANT: must use math.floor, not int().
+    int() truncates toward zero, so int(-91.5) = -91.
+    math.floor(-91.5) = -92, which is correct for negative longitudes.
+    Without this, a point at lon=-9.19 gets assigned to cell -9.1
+    (lon -9.1 to -9.0, east of Lisbon) instead of cell -9.2 (correct).
+    The points and OSM network end up in completely different places.
+    """
     return (
-        round(int(lat / CELL_SIZE) * CELL_SIZE, 2),
-        round(int(lon / CELL_SIZE) * CELL_SIZE, 2)
+        round(math.floor(lat / CELL_SIZE) * CELL_SIZE, 2),
+        round(math.floor(lon / CELL_SIZE) * CELL_SIZE, 2)
     )
 
 def cell_bbox(clat: float, clon: float) -> tuple:
@@ -137,8 +146,8 @@ def build_grid(df: pd.DataFrame) -> dict:
     Returns {(clat, clon): sub-DataFrame} for cells with >= MIN_POINTS.
     """
     df = df.copy()
-    df['clat'] = df['lat'].apply(lambda v: round(int(v / CELL_SIZE) * CELL_SIZE, 2))
-    df['clon'] = df['lon'].apply(lambda v: round(int(v / CELL_SIZE) * CELL_SIZE, 2))
+    df['clat'] = df['lat'].apply(lambda v: round(math.floor(v / CELL_SIZE) * CELL_SIZE, 2))
+    df['clon'] = df['lon'].apply(lambda v: round(math.floor(v / CELL_SIZE) * CELL_SIZE, 2))
 
     cells = {}
     for (clat, clon), group in df.groupby(['clat', 'clon']):
@@ -150,7 +159,7 @@ def build_grid(df: pd.DataFrame) -> dict:
 
 
 # ── OSM network — fetch or load from cache ─────────────────────────────────
-def get_network(clat: float, clon: float, refresh: bool) -> gpd.GeoDataFrame | None:
+def get_network(clat: float, clon: float, refresh: bool) -> Optional[gpd.GeoDataFrame]:
     cache_path = cell_cache_path(clat, clon)
 
     # Cache hit
@@ -207,24 +216,59 @@ def get_network(clat: float, clon: float, refresh: bool) -> gpd.GeoDataFrame | N
 
 
 # ── Snap & aggregate ───────────────────────────────────────────────────────
-def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame) -> dict:
-    edges_proj = edges.to_crs("EPSG:3763")
-    mids       = edges_proj.geometry.interpolate(0.5, normalized=True)
-    coords     = np.array([(g.x, g.y) for g in mids])
-    tree       = cKDTree(coords)
+def utm_epsg(clon: float) -> str:
+    """
+    Return the EPSG code for the UTM zone covering a given longitude.
+    Works for all of Portugal including Azores (zone 26) and Madeira (zone 28).
+    EPSG:3763 only covers mainland — this is the correct replacement.
+    """
+    zone = int((clon + 180) / 6) + 1
+    return f"EPSG:326{zone:02d}"   # Northern Hemisphere (all of Portugal)
 
-    pts      = gpd.GeoDataFrame(df_cell, geometry=gpd.points_from_xy(df_cell.lon, df_cell.lat), crs="EPSG:4326")
-    pts_proj = pts.to_crs("EPSG:3763")
-    pt_xy    = np.array([(g.x, g.y) for g in pts_proj.geometry])
 
-    dists, idxs = tree.query(pt_xy, k=1)
-    valid = dists <= SNAP_THRESHOLD_M
+def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: float):
+    """
+    Snap infraction points to nearest road edge using sjoin_nearest.
 
-    df_cell = df_cell.copy()
-    df_cell['edge_idx'] = np.where(valid, idxs, -1)
+    WHY sjoin_nearest instead of a KDTree on midpoints:
+    The previous approach built a KDTree from edge midpoints and measured
+    distance from each point to the nearest midpoint. A point 10m from the
+    *end* of a 500m street segment is ~260m from its midpoint — well above
+    the 50m threshold, so it was rejected. sjoin_nearest measures distance
+    to the actual line geometry, so any point within 50m of any part of any
+    edge gets matched correctly.
+
+    WHY per-cell UTM instead of EPSG:3763:
+    EPSG:3763 (Portugal TM06) is only valid for mainland Portugal. For Azores
+    cells (~-25° lon) and Madeira cells (~-17° lon) it produces wildly wrong
+    metric coordinates, making all distances appear huge. We compute the
+    correct UTM zone from the cell's longitude instead.
+    """
+    epsg = utm_epsg(clon)
+
+    # Reset index so edge positions are 0, 1, 2… (iloc-safe for build_features)
+    edges_proj = edges.reset_index(drop=True).to_crs(epsg)
+
+    pts = gpd.GeoDataFrame(
+        df_cell.copy(),
+        geometry=gpd.points_from_xy(df_cell.lon, df_cell.lat),
+        crs="EPSG:4326"
+    ).to_crs(epsg)
+
+    # sjoin_nearest: for each point find the nearest edge within SNAP_THRESHOLD_M
+    joined = gpd.sjoin_nearest(
+        pts,
+        edges_proj[['geometry']],
+        how='left',
+        max_distance=SNAP_THRESHOLD_M,
+        distance_col='snap_dist_m'
+    )
+
+    snapped = joined[joined['index_right'].notna()].copy()
+    snapped['edge_idx'] = snapped['index_right'].astype(int)
 
     agg = {}
-    for edge_idx, group in df_cell[df_cell['edge_idx'] >= 0].groupby('edge_idx'):
+    for edge_idx, group in snapped.groupby('edge_idx'):
         types = group['infraction_type'].tolist()
         years = [y for y in group['year'].tolist() if len(y) == 4 and y.isdigit()]
         agg[int(edge_idx)] = {
@@ -234,11 +278,14 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame) -> dict:
             'last_year':      max(years) if years else None,
             'type_breakdown': dict(Counter(types))
         }
-    return agg, valid.sum()
+
+    return agg, len(snapped), edges_proj  # return edges_proj so build_features uses same index
 
 
-def build_features(edges: gpd.GeoDataFrame, agg: dict) -> list:
-    edges_wgs = edges.to_crs("EPSG:4326") if edges.crs.to_epsg() != 4326 else edges
+def build_features(edges_proj: gpd.GeoDataFrame, agg: dict) -> list:
+    # edges_proj already has a reset integer index from snap_and_aggregate.
+    # Convert back to WGS84 for the output GeoJSON.
+    edges_wgs = edges_proj.to_crs("EPSG:4326")
     features  = []
     for edge_idx, stats in agg.items():
         try:
@@ -308,8 +355,8 @@ def main():
             skipped += 1
             continue
 
-        agg, snapped = snap_and_aggregate(df_cell, edges)
-        features = build_features(edges, agg)
+        agg, snapped, edges_proj = snap_and_aggregate(df_cell, edges, clon)
+        features = build_features(edges_proj, agg)
         all_features.extend(features)
         print(f"  {snapped}/{len(df_cell)} snapped → {len(features)} segments")
         succeeded += 1
