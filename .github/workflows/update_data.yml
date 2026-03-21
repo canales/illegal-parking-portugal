@@ -23,7 +23,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install osmnx==2.0.1 geopandas scipy shapely numpy pandas pyogrio
+        run: pip install osmnx==2.0.1 geopandas shapely pandas pyogrio
 
       # Restore the OSM network cache from previous runs.
       # Cache key includes the month so it auto-refreshes once a month,
