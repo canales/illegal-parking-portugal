@@ -910,12 +910,21 @@ function syncOpacitySlider(view) {
 }
 // ════════════════════════════════════════════════════════════════════════════
 function populateFilters() {
-  typeList = [...new Set(allData.features.map(f => f.properties.infraction_type))].sort();
+  // Count totals across ALL data (not filtered) so order is stable
+  const totals = {};
+  allData.features.forEach(f => {
+    const tp = f.properties.infraction_type;
+    totals[tp] = (totals[tp] || 0) + 1;
+  });
+
+  // Sort by total count descending — this order is fixed regardless of zoom/filter
+  typeList = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
+
   const sel = document.getElementById('filter-type');
   typeList.forEach(type => {
     const opt = document.createElement('option');
     opt.value = type;
-    opt.dataset.type = type;   // keep raw key for count updates
+    opt.dataset.type = type;
     opt.textContent = lbl(type);
     sel.appendChild(opt);
   });
@@ -1222,8 +1231,18 @@ function updateViewportStats() {
   if (!map.getLayer('points-circle')) return;
   const vis = map.getLayoutProperty('points-circle', 'visibility');
   if (vis === 'none') {
-    const filtered = getFilteredFeatures();
-    updateStatsPanel(filtered);
+    updateStatsPanel(getFilteredFeatures());
+    return;
+  }
+
+  // If zoomed out to country level, queryRenderedFeatures only returns a
+  // subset of points due to MapLibre's tile rendering limits. Detect this
+  // by checking zoom level — below 9 (city level) the viewport covers a
+  // large enough area that using the full filtered dataset is more accurate
+  // than counting only rendered tiles.
+  const zoom = map.getZoom();
+  if (zoom < 9) {
+    updateStatsPanel(getFilteredFeatures());
     return;
   }
 
