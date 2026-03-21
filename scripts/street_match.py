@@ -5,26 +5,25 @@ Snaps infraction points to the OSM road network and aggregates per street.
 Produces data/streets_matched.geojson for the map's "By street" view.
 
 Strategy:
-  - Uses osmnx to fetch the road network from OpenStreetMap.
-  - Runs city by city (Lisbon, Porto, Braga, etc.) to avoid Overpass
-    API timeouts that would happen fetching all Portugal at once.
-  - Snaps each point to nearest road edge within 50m.
-  - Aggregates count, top_infraction, first_year, last_year per edge.
-  - Merges all cities into a single output GeoJSON.
+  - Uses osmnx to fetch road networks from OSM via the Overpass API.
+  - Runs one small district at a time to stay within Overpass limits.
+  - Each district has a hard timeout — if it hangs, it's skipped cleanly.
+  - Results from all districts are merged into one output GeoJSON.
 
-Runtime: ~10–20 min on GitHub Actions (network fetch dominates).
+Runtime: ~8–15 min on GitHub Actions.
 
 Usage:
     pip install osmnx geopandas scipy shapely numpy pandas
     python scripts/street_match.py
 
-    # Single city for quick local testing:
-    python scripts/street_match.py --city lisbon
+    # Single district for quick local testing:
+    python scripts/street_match.py --district lisbon_center
 """
 
 import os
 import json
 import argparse
+import signal
 from collections import Counter
 
 import osmnx as ox
@@ -38,35 +37,50 @@ ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IN_PATH  = os.path.join(ROOT, 'data', 'infractions.geojson')
 OUT_PATH = os.path.join(ROOT, 'data', 'streets_matched.geojson')
 
-# ── Cities to process ─────────────────────────────────────────────────────
-# Each entry: name, (lat_min, lon_min, lat_max, lon_max)
-# Covers ~95% of the data. Add more cities here as the dataset grows.
-CITIES = {
-    'lisbon':    (38.60, -9.50, 38.90, -8.90),
-    'porto':     (41.00, -8.80, 41.30, -8.50),
-    'braga':     (41.45, -8.55, 41.65, -8.35),
-    'coimbra':   (40.15, -8.55, 40.25, -8.35),
-    'aveiro':    (40.58, -8.70, 40.68, -8.55),
-    'setubal':   (38.50, -8.95, 38.60, -8.85),
-    'faro':      (37.00, -8.05, 37.10, -7.90),
-    'cascais':   (38.68, -9.50, 38.76, -9.38),
-    'sintra':    (38.76, -9.45, 38.86, -9.30),
-    'amadora':   (38.73, -9.25, 38.78, -9.18),
-    'matosinhos':(41.17, -8.74, 41.22, -8.66),
-    'gaia':      (41.08, -8.65, 41.17, -8.55),
+# ── Districts ──────────────────────────────────────────────────────────────
+# Deliberately small bboxes — Overpass chokes on large areas.
+# Each bbox: (lat_min, lon_min, lat_max, lon_max)
+# Rule of thumb: keep each box under ~0.15° × 0.15° (~15km × 15km)
+DISTRICTS = {
+    # Lisbon split into 4 quadrants
+    'lisbon_center':  (38.70, -9.20, 38.80, -9.10),
+    'lisbon_west':    (38.70, -9.30, 38.80, -9.20),
+    'lisbon_north':   (38.80, -9.20, 38.90, -9.10),
+    'lisbon_cascais': (38.68, -9.45, 38.76, -9.30),
+    'lisbon_sintra':  (38.76, -9.45, 38.86, -9.30),
+    'lisbon_amadora': (38.73, -9.28, 38.80, -9.18),
+    'lisbon_setubal': (38.50, -8.95, 38.62, -8.83),
+    # Porto metro split into 3
+    'porto_center':   (41.13, -8.65, 41.22, -8.55),
+    'porto_south':    (41.08, -8.65, 41.15, -8.55),
+    'matosinhos':     (41.17, -8.74, 41.24, -8.64),
+    # Other cities
+    'braga':          (41.53, -8.48, 41.62, -8.38),
+    'coimbra':        (40.18, -8.48, 40.24, -8.38),
+    'aveiro':         (40.60, -8.67, 40.66, -8.58),
+    'faro':           (37.00, -8.03, 37.08, -7.92),
 }
 
-# Max snapping distance in metres
-SNAP_THRESHOLD_M = 50
+SNAP_THRESHOLD_M   = 50
+FETCH_TIMEOUT_SECS = 300  # 5 min per district — if it takes longer, skip it
 
-# osmnx config — be polite to the Overpass API
-ox.settings.log_console = False
-ox.settings.use_cache   = True   # caches network requests locally
-ox.settings.timeout     = 180
+# osmnx settings — conservative to avoid throttling
+ox.settings.log_console             = False
+ox.settings.use_cache               = False  # no cache on Actions (ephemeral runner)
+ox.settings.timeout                 = 90     # Overpass HTTP timeout per request
+ox.settings.max_query_area_size     = 50_000_000  # 50 km² max per sub-query
 
 
+# ── Timeout helper (Unix only — works on GitHub Actions Linux) ─────────────
+class TimeoutError(Exception):
+    pass
+
+def _timeout_handler(signum, frame):
+    raise TimeoutError()
+
+
+# ── Data loading ───────────────────────────────────────────────────────────
 def load_infractions():
-    """Load all infraction points from GeoJSON."""
     with open(IN_PATH, 'r', encoding='utf-8') as f:
         data = json.load(f)
     rows = []
@@ -79,7 +93,7 @@ def load_infractions():
             'year': p.get('data_data', '')[:4]
         })
     df = pd.DataFrame(rows)
-    print(f"Loaded {len(df)} infraction points total.")
+    print(f"Loaded {len(df)} infraction points.")
     return df
 
 
@@ -91,55 +105,61 @@ def filter_to_bbox(df, bbox):
     ].copy()
 
 
-def fetch_network(city_name, bbox):
-    """Fetch simplified OSM drive network for a bounding box."""
+# ── OSM network fetch (with hard timeout) ─────────────────────────────────
+def fetch_network(name, bbox):
     lat_min, lon_min, lat_max, lon_max = bbox
-    print(f"  Fetching OSM network for {city_name}...")
+    print(f"  Fetching OSM network...", end=' ', flush=True)
+
+    # Set alarm (Linux/Mac only — silently skipped on Windows)
+    try:
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(FETCH_TIMEOUT_SECS)
+    except AttributeError:
+        pass  # Windows doesn't have SIGALRM
+
     try:
         G = ox.graph_from_bbox(
-            bbox=(lat_max, lat_min, lon_max, lon_min),  # osmnx order: N, S, E, W
+            bbox=(lat_max, lat_min, lon_max, lon_min),
             network_type='drive',
             simplify=True
         )
         edges = ox.graph_to_gdfs(G, nodes=False)
-        print(f"  → {len(edges)} road edges loaded.")
+        print(f"{len(edges)} edges.")
         return edges
-    except Exception as e:
-        print(f"  WARNING: Could not fetch network for {city_name}: {e}")
+    except TimeoutError:
+        print(f"TIMED OUT after {FETCH_TIMEOUT_SECS}s — skipping.")
         return None
+    except Exception as e:
+        print(f"FAILED ({type(e).__name__}: {e}) — skipping.")
+        return None
+    finally:
+        try:
+            signal.alarm(0)
+        except AttributeError:
+            pass
 
 
-def build_kdtree(edges):
-    """Build KD-tree from edge midpoints projected to metric CRS."""
-    edges_proj = edges.to_crs("EPSG:3763")  # Portugal TM06
-    mids = edges_proj.geometry.interpolate(0.5, normalized=True)
-    coords = np.array([(g.x, g.y) for g in mids])
-    tree = cKDTree(coords)
-    return tree, edges_proj
-
-
-def snap_and_aggregate(df_city, edges, city_name):
-    """Snap points to nearest edge and aggregate stats per edge."""
-    if df_city.empty:
-        print(f"  No infraction points in {city_name}, skipping.")
+# ── Snap & aggregate ───────────────────────────────────────────────────────
+def snap_and_aggregate(df_pts, edges):
+    if df_pts.empty or edges is None or edges.empty:
         return {}
 
-    tree, edges_proj = build_kdtree(edges)
+    edges_proj = edges.to_crs("EPSG:3763")
+    mids   = edges_proj.geometry.interpolate(0.5, normalized=True)
+    coords = np.array([(g.x, g.y) for g in mids])
+    tree   = cKDTree(coords)
 
-    # Project points
-    pts = gpd.GeoDataFrame(df_city, geometry=gpd.points_from_xy(df_city.lon, df_city.lat), crs="EPSG:4326")
+    pts      = gpd.GeoDataFrame(df_pts, geometry=gpd.points_from_xy(df_pts.lon, df_pts.lat), crs="EPSG:4326")
     pts_proj = pts.to_crs("EPSG:3763")
-    pt_coords = np.array([(g.x, g.y) for g in pts_proj.geometry])
+    pt_xy    = np.array([(g.x, g.y) for g in pts_proj.geometry])
 
-    dists, idxs = tree.query(pt_coords, k=1)
+    dists, idxs = tree.query(pt_xy, k=1)
     valid = dists <= SNAP_THRESHOLD_M
+    print(f"  {valid.sum()}/{len(df_pts)} points snapped.")
 
-    snapped = valid.sum()
-    print(f"  {snapped}/{len(df_city)} points snapped within {SNAP_THRESHOLD_M}m.")
-
-    df_city = df_city.copy()
-    df_city['edge_idx'] = np.where(valid, idxs, -1)
-    matched = df_city[df_city['edge_idx'] >= 0]
+    df_pts = df_pts.copy()
+    df_pts['edge_idx'] = np.where(valid, idxs, -1)
+    matched = df_pts[df_pts['edge_idx'] >= 0]
 
     agg = {}
     for edge_idx, group in matched.groupby('edge_idx'):
@@ -156,24 +176,17 @@ def snap_and_aggregate(df_city, edges, city_name):
 
 
 def build_features(edges, agg):
-    """Convert aggregated edge stats to GeoJSON features."""
     features = []
     edges_wgs = edges.to_crs("EPSG:4326") if edges.crs.to_epsg() != 4326 else edges
-
     for edge_idx, stats in agg.items():
         try:
             row  = edges_wgs.iloc[edge_idx]
             geom = row.geometry
             if geom is None or geom.is_empty:
                 continue
-
             name = row.get('name') if hasattr(row, 'get') else None
-            if isinstance(name, float):
-                name = None
-            # osmnx sometimes returns a list of names for merged edges
-            if isinstance(name, list):
-                name = name[0]
-
+            if isinstance(name, float): name = None
+            if isinstance(name, list):  name = name[0]
             features.append({
                 "type": "Feature",
                 "geometry": geom.__geo_interface__,
@@ -191,38 +204,42 @@ def build_features(edges, agg):
     return features
 
 
+# ── Main ───────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--city', choices=list(CITIES.keys()),
-                        help='Process a single city only (faster for testing)')
+    parser.add_argument('--district', choices=list(DISTRICTS.keys()),
+                        help='Run a single district only (for testing)')
     args = parser.parse_args()
 
     df_all = load_infractions()
-    cities_to_run = {args.city: CITIES[args.city]} if args.city else CITIES
+    districts = {args.district: DISTRICTS[args.district]} if args.district else DISTRICTS
 
     all_features = []
-    total_edges_processed = 0
+    succeeded, skipped = 0, 0
 
-    for city_name, bbox in cities_to_run.items():
-        print(f"\n── {city_name.upper()} ──────────────────────────────")
-        df_city = filter_to_bbox(df_all, bbox)
-        print(f"  {len(df_city)} infraction points in bbox.")
+    for name, bbox in districts.items():
+        print(f"\n── {name.upper()} ──")
+        df_district = filter_to_bbox(df_all, bbox)
+        print(f"  {len(df_district)} points in bbox.")
 
-        if df_city.empty:
-            print("  Skipping — no data.")
+        if df_district.empty:
+            print("  No data — skipping.")
+            skipped += 1
             continue
 
-        edges = fetch_network(city_name, bbox)
-        if edges is None or edges.empty:
+        edges = fetch_network(name, bbox)
+        if edges is None:
+            skipped += 1
             continue
 
-        agg = snap_and_aggregate(df_city, edges, city_name)
+        agg      = snap_and_aggregate(df_district, edges)
         features = build_features(edges, agg)
         all_features.extend(features)
-        total_edges_processed += len(agg)
-        print(f"  → {len(features)} street segments with infractions.")
+        print(f"  → {len(features)} segments with infractions.")
+        succeeded += 1
 
-    print(f"\n── TOTAL: {len(all_features)} segments across all cities ──")
+    print(f"\n── DONE: {succeeded} districts succeeded, {skipped} skipped ──")
+    print(f"   {len(all_features)} total street segments.")
 
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     with open(OUT_PATH, 'w', encoding='utf-8') as f:
