@@ -118,6 +118,31 @@
     #hover-tip .tip-type { font-weight: 700; color: #e63946; margin-bottom: 3px; }
     #hover-tip .tip-row  { color: #ccc; }
 
+    /* ── Point click popup ──────────────────────────────────────────────── */
+    #point-popup {
+      position: absolute; background: rgba(13,13,22,0.97); border: 1px solid #2a2a3a;
+      border-radius: 8px; padding: 12px 14px; font-size: 0.78rem;
+      z-index: 22; display: none; max-width: 250px; line-height: 1.6;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
+    #point-popup .pp-close {
+      float: right; background: none; border: none; color: #555;
+      font-size: 1rem; cursor: pointer; margin: -4px -4px 0 8px; line-height: 1;
+    }
+    #point-popup .pp-close:hover { color: #fff; }
+    #point-popup .pp-type { font-weight: 700; color: #e63946; margin-bottom: 5px; font-size: 0.85rem; }
+    #point-popup .pp-row  { color: #bbb; margin-bottom: 2px; }
+    #point-popup .pp-links { display: flex; gap: 7px; margin-top: 10px; }
+    #point-popup .pp-link {
+      flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px;
+      padding: 6px 8px; border-radius: 5px; font-size: 0.72rem; font-weight: 600;
+      text-decoration: none; border: none; cursor: pointer;
+    }
+    #point-popup .pp-link.gsv { background: #1a73e8; color: white; }
+    #point-popup .pp-link.gsv:hover { background: #1557b0; }
+    #point-popup .pp-link.mapillary { background: #39AF5C; color: white; }
+    #point-popup .pp-link.mapillary:hover { background: #2d8f4a; }
+
     /* ── Street panel ───────────────────────────────────────────────────── */
     #street-panel {
       position: absolute; top: 0; right: 0; width: 300px; height: 100%;
@@ -249,6 +274,16 @@
 <div id="map-wrap">
   <div id="map"></div>
   <div id="hover-tip"></div>
+  <div id="point-popup">
+    <button class="pp-close" onclick="closePointPopup()">✕</button>
+    <div class="pp-type" id="pp-type"></div>
+    <div class="pp-row"  id="pp-date"></div>
+    <div class="pp-row"  id="pp-auth"></div>
+    <div class="pp-links">
+      <a class="pp-link gsv"       id="pp-gsv"       href="#" target="_blank">🗺 Street View</a>
+      <a class="pp-link mapillary" id="pp-mapillary" href="#" target="_blank">📷 Mapillary</a>
+    </div>
+  </div>
 
   <!-- Street detail panel -->
   <div id="street-panel">
@@ -624,10 +659,13 @@ function setMapStyle(styleKey) {
   document.getElementById('timeline-bar').style.borderTopColor =
     isLight ? '#ccc' : '#2a2a3a';
 
-  // Swap the basemap — MapLibre clears all custom layers on style change,
-  // so we re-add everything once the new style has finished loading.
+  // Swap the basemap. MapLibre clears all custom layers on setStyle().
+  // We need TWO events: style.load fires when the style JSON is parsed,
+  // then idle fires when tiles have rendered and the map is truly ready
+  // to accept addSource/addLayer calls. Using only style.load causes
+  // layers to silently fail on some basemaps.
   map.setStyle(MAP_STYLES[styleKey]);
-  map.once('style.load', initAllLayers);
+  map.once('style.load', () => map.once('idle', initAllLayers));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -836,7 +874,9 @@ function applyAllFilters() {
     map.setFilter('streets-line', currentType === 'all' ? null : ['==', ['get', 'top_infraction'], currentType]);
 
   updateFilterCounts(filtered);
-  updateStatsPanel(filtered);
+  // Stats panel: use viewport if points are visible, else full filtered set
+  // Defer slightly so MapLibre has time to update rendered features after setData
+  setTimeout(updateViewportStats, 100);
   updateStats(filtered.length);
 }
 
@@ -982,7 +1022,7 @@ function showTip(point, html) {
 }
 function hideTip() { hoverTip.style.display = 'none'; }
 
-// Points
+// Points — hover
 map.on('mouseenter', 'points-circle', () => map.getCanvas().style.cursor = 'pointer');
 map.on('mouseleave', 'points-circle', () => { map.getCanvas().style.cursor = ''; hideTip(); });
 map.on('mousemove',  'points-circle', e => {
@@ -993,6 +1033,78 @@ map.on('mousemove',  'points-circle', e => {
     <div class="tip-row">🚔 ${p.autoridade||'—'}</div>
   `);
 });
+
+// Points — click → popup with GSV + Mapillary
+map.on('click', 'points-circle', e => {
+  e.stopPropagation();   // prevent the "click empty space" handler from firing
+  const p      = e.features[0].properties;
+  const lngLat = e.lngLat;
+
+  document.getElementById('pp-type').textContent = lbl(p.infraction_type);
+  document.getElementById('pp-date').textContent =
+    `📅 ${(p.data_data||'').substring(0,10)} ${t('tip_at')} ${p.data_hora||'—'}`;
+  document.getElementById('pp-auth').textContent = `🚔 ${p.autoridade||'—'}`;
+
+  // Google Street View — drop user into street-level pano at this location
+  document.getElementById('pp-gsv').href =
+    `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lngLat.lat},${lngLat.lng}`;
+
+  // Mapillary — search for street-level photos near this point
+  document.getElementById('pp-mapillary').href =
+    `https://www.mapillary.com/app/?lat=${lngLat.lat}&lng=${lngLat.lng}&z=17`;
+
+  // Position popup near the click, keeping it inside the viewport
+  const popup = document.getElementById('point-popup');
+  popup.style.display = 'block';
+  const rect   = document.getElementById('map').getBoundingClientRect();
+  const margin = 16;
+  let x = e.point.x + 14;
+  let y = e.point.y - 10;
+  if (x + 260 > rect.width)  x = e.point.x - 270;
+  if (y + 160 > rect.height) y = e.point.y - 170;
+  popup.style.left = Math.max(margin, x) + 'px';
+  popup.style.top  = Math.max(margin, y) + 'px';
+  hideTip();
+});
+
+function closePointPopup() {
+  document.getElementById('point-popup').style.display = 'none';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// VIEWPORT-REACTIVE STATS PANEL
+// ════════════════════════════════════════════════════════════════════════════
+function updateViewportStats() {
+  // Only run when the points layer is actually visible
+  if (!map.getLayer('points-circle')) return;
+  const vis = map.getLayoutProperty('points-circle', 'visibility');
+  if (vis === 'none') return;
+
+  // queryRenderedFeatures returns what's currently visible on screen
+  const rendered = map.queryRenderedFeatures({ layers: ['points-circle'] });
+
+  if (rendered.length === 0) {
+    // If nothing rendered (e.g. zoomed to ocean), fall back to full filtered set
+    const filtered = getFilteredFeatures();
+    updateStatsPanel(filtered);
+    return;
+  }
+
+  // De-duplicate — rendered features can contain duplicates for clustered tiles
+  const seen = new Set();
+  const unique = rendered.filter(f => {
+    const key = `${f.properties.data_data}_${f.geometry.coordinates}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  updateStatsPanel(unique.map(f => f));  // pass as array of feature-like objects
+}
+
+// Hook into map movement — update stats whenever the user pans or zooms
+map.on('moveend', updateViewportStats);
+map.on('zoomend', updateViewportStats);
 
 // Hexbins
 map.on('mouseenter', 'hex-extrusion', () => map.getCanvas().style.cursor = 'pointer');
@@ -1053,7 +1165,12 @@ map.on('click', 'streets-line', e => {
 
 map.on('click', e => {
   const hits = map.queryRenderedFeatures(e.point, { layers: ['streets-line','points-circle','hex-extrusion'] });
-  if (!hits.length) { closePanel(); hideTip(); if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], '']); }
+  if (!hits.length) {
+    closePanel();
+    closePointPopup();
+    hideTip();
+    if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], '']);
+  }
 });
 
 function openPanel()  { document.getElementById('street-panel').classList.add('open'); }
