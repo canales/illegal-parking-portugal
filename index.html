@@ -68,30 +68,44 @@
     }
     #play-btn:hover { background: #c1121f; }
     #timeline-wrap  { flex: 1; display: flex; flex-direction: column; gap: 4px; }
-    #timeline-track { position: relative; height: 20px; display: flex; align-items: center; }
-    #timeline-slider {
-      width: 100%; -webkit-appearance: none; height: 3px;
-      background: #333; border-radius: 2px; outline: none; cursor: pointer;
+    #timeline-track {
+      position: relative; height: 20px; display: flex; align-items: center;
     }
-    #timeline-slider::-webkit-slider-thumb {
-      -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
-      background: #e63946; cursor: pointer; border: 2px solid #fff;
+    /* Rail — sits behind both thumbs */
+    #timeline-rail {
+      position: absolute; left: 0; right: 0; height: 3px;
+      background: #333; border-radius: 2px; pointer-events: none;
     }
-    #timeline-slider::-moz-range-thumb {
-      width: 14px; height: 14px; border-radius: 50%;
-      background: #e63946; cursor: pointer; border: 2px solid #fff;
-    }
+    /* Colored fill between the two handles */
     #timeline-fill {
-      position: absolute; left: 0; height: 3px; background: #e63946;
+      position: absolute; height: 3px; background: #e63946;
       border-radius: 2px; pointer-events: none; top: 50%; transform: translateY(-50%);
     }
+    /* Both range inputs sit on top of each other, full width, transparent track */
+    .timeline-range {
+      position: absolute; width: 100%; -webkit-appearance: none;
+      height: 3px; background: transparent; outline: none;
+      pointer-events: none; /* re-enabled only for the thumb via thumb styles */
+    }
+    .timeline-range::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%;
+      background: #e63946; cursor: pointer; border: 2px solid #fff;
+      pointer-events: all; position: relative; z-index: 1;
+    }
+    .timeline-range::-moz-range-thumb {
+      width: 15px; height: 15px; border-radius: 50%;
+      background: #e63946; cursor: pointer; border: 2px solid #fff;
+      pointer-events: all;
+    }
+    /* When handles overlap, the active one sits on top */
+    .timeline-range:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(230,57,70,0.3); }
     #timeline-labels {
       display: flex; justify-content: space-between;
       font-size: 0.6rem; color: #555; user-select: none;
     }
     #timeline-current {
       font-size: 0.72rem; color: #ccc; text-align: center;
-      min-width: 110px; flex-shrink: 0;
+      min-width: 140px; flex-shrink: 0; line-height: 1.5;
     }
     #timeline-current strong { color: #e63946; }
 
@@ -150,6 +164,29 @@
     /* ── Data note ──────────────────────────────────────────────────────── */
     #data-note { position: absolute; bottom: 52px; left: 10px; font-size: 0.65rem; color: #555; z-index: 5; pointer-events: none; }
     #data-note a { color: #4a9eff; text-decoration: none; pointer-events: all; }
+
+    /* ── Stats panel ────────────────────────────────────────────────────── */
+    #stats-panel {
+      position: absolute; top: 10px; left: 10px; width: 220px;
+      background: rgba(13,13,22,0.92); border: 1px solid #2a2a3a;
+      border-radius: 8px; z-index: 8; overflow: hidden;
+      transition: height 0.2s ease;
+    }
+    #stats-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 11px; cursor: pointer; user-select: none;
+    }
+    #stats-header span { font-size: 0.7rem; font-weight: 700; color: #ccc; text-transform: uppercase; letter-spacing: 0.6px; }
+    #stats-toggle { font-size: 0.65rem; color: #555; transition: transform 0.2s; }
+    #stats-panel.collapsed #stats-toggle { transform: rotate(-90deg); }
+    #stats-body { padding: 4px 11px 10px; }
+    #stats-panel.collapsed #stats-body { display: none; }
+    .stats-row { margin-bottom: 7px; }
+    .stats-row-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.68rem; color: #bbb; margin-bottom: 2px; }
+    .stats-row-label .s-count { color: #e63946; font-weight: 700; font-size: 0.72rem; flex-shrink: 0; margin-left: 6px; }
+    .stats-row-label .s-pct   { color: #555; font-size: 0.62rem; flex-shrink: 0; margin-left: 4px; }
+    .stats-bar-bg { height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
+    .stats-bar    { height: 100%; border-radius: 2px; transition: width 0.35s ease; }
   </style>
 </head>
 <body>
@@ -185,6 +222,17 @@
   <label>
     <span data-i18n="filter_label">Infraction type:</span>
     <select id="filter-type"><option value="all" data-i18n="filter_all">All</option></select>
+  </label>
+  <label>
+    <span data-i18n="style_label">Basemap:</span>
+    <select id="style-select" onchange="setMapStyle(this.value)">
+      <option value="dark-matter">Dark Matter</option>
+      <option value="positron">Positron</option>
+      <option value="voyager">Voyager</option>
+      <option value="ofm-bright">OFM Bright</option>
+      <option value="ofm-liberty">OFM Liberty</option>
+      <option value="ofm-fiord">OFM Fiord</option>
+    </select>
   </label>
   <label>
     <span data-i18n="view_label">View:</span>
@@ -230,13 +278,26 @@
     <div class="legend-item"><div class="legend-swatch" style="background:#5A1846"></div> 100+</div>
   </div>
 
+  <!-- Stats panel -->
+  <div id="stats-panel">
+    <div id="stats-header" onclick="toggleStats()">
+      <span data-i18n="stats_title">Top infractions</span>
+      <span id="stats-toggle">▾</span>
+    </div>
+    <div id="stats-body">
+      <div id="stats-rows"></div>
+    </div>
+  </div>
+
   <!-- Timeline bar -->
   <div id="timeline-bar">
     <button id="play-btn" onclick="togglePlay()" title="Play / Pause">▶</button>
     <div id="timeline-wrap">
       <div id="timeline-track">
+        <div id="timeline-rail"></div>
         <div id="timeline-fill"></div>
-        <input type="range" id="timeline-slider" min="0" value="0" step="1" />
+        <input type="range" class="timeline-range" id="slider-start" min="0" value="0" step="1" />
+        <input type="range" class="timeline-range" id="slider-end"   min="0" value="0" step="1" />
       </div>
       <div id="timeline-labels"></div>
     </div>
@@ -285,6 +346,8 @@ const T = {
     tip_hex_top:     'Most common:',
     streets_soon:    'Street data not yet available (coming soon)',
     timeline_all:    'All time',
+    style_label:     'Basemap:',
+    stats_title:     'Top infractions',
     month_names:     ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   },
   pt: {
@@ -317,6 +380,8 @@ const T = {
     tip_hex_top:     'Tipo mais comum:',
     streets_soon:    'Dados por rua ainda não disponíveis (em breve)',
     timeline_all:    'Todo o período',
+    style_label:     'Mapa base:',
+    stats_title:     'Principais infrações',
     month_names:     ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'],
   }
 };
@@ -423,6 +488,23 @@ function computeHexbins(features) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// MAP STYLES
+// ════════════════════════════════════════════════════════════════════════════
+const MAP_STYLES = {
+  'dark-matter': 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  'positron':    'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+  'voyager':     'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+  'ofm-bright':  'https://tiles.openfreemap.org/styles/bright',
+  'ofm-liberty': 'https://tiles.openfreemap.org/styles/liberty',
+  'ofm-fiord':   'https://tiles.openfreemap.org/styles/fiord',
+};
+
+// Light basemaps need dark tooltip/panel text and a light body bg
+const LIGHT_STYLES = new Set(['positron', 'voyager', 'ofm-bright', 'ofm-liberty']);
+
+let currentStyle = 'dark-matter';
+
+// ════════════════════════════════════════════════════════════════════════════
 // STATE
 // ════════════════════════════════════════════════════════════════════════════
 let lang          = 'en';
@@ -432,7 +514,8 @@ let currentView   = 'heat';
 let currentType   = 'all';
 let typeList      = [];
 let months        = [];       // sorted array of 'YYYY-MM' strings
-let currentMonthIdx = -1;     // -1 = show all
+let startMonthIdx = 0;        // left handle
+let endMonthIdx   = 0;        // right handle — both set in initTimeline()
 let playInterval  = null;
 
 const POINTS_URL  = 'data/infractions.geojson';
@@ -446,10 +529,12 @@ function lbl(type) { return LABELS[lang][type] || type; }
 
 function getFilteredFeatures() {
   if (!allData) return [];
+  const start = months[startMonthIdx];
+  const end   = months[endMonthIdx];
   return allData.features.filter(f => {
     const typeOk = currentType === 'all' || f.properties.infraction_type === currentType;
-    const dateOk = currentMonthIdx === -1 ||
-      (f.properties.data_data || '').substring(0, 7) <= months[currentMonthIdx];
+    const m      = (f.properties.data_data || '').substring(0, 7);
+    const dateOk = m >= start && m <= end;
     return typeOk && dateOk;
   });
 }
@@ -473,7 +558,12 @@ function setLang(l) {
   });
   const streetBtn = document.getElementById('btn-streets');
   if (streetBtn.disabled) streetBtn.title = T[l].streets_soon;
-  updateTimelineLabel();
+  if (months.length) updateTimelineLabel();
+  if (allData) {
+    const filtered = getFilteredFeatures();
+    updateFilterCounts(filtered);
+    updateStatsPanel(filtered);
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -481,7 +571,7 @@ function setLang(l) {
 // ════════════════════════════════════════════════════════════════════════════
 const map = new maplibregl.Map({
   container: 'map',
-  style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  style: MAP_STYLES[currentStyle],
   center: [-9.14, 38.72],
   zoom: 11,
   attributionControl: false
@@ -498,24 +588,47 @@ map.on('load', async () => {
 
   if (ptRes.status === 'fulfilled') {
     allData = ptRes.value;
-    initPointsLayers();
-    initHexLayer();
     populateFilters();
     initTimeline();
-    updateStats();
   }
-
   if (stRes.status === 'fulfilled') {
     streetData = stRes.value;
-    initStreetLayers();
   } else {
     const btn = document.getElementById('btn-streets');
     btn.disabled = true;
     btn.title = t('streets_soon');
   }
 
-  setView('heat');
+  initAllLayers();
+  updateStats();
 });
+
+// ── Re-add all layers (called on initial load and after every style swap) ──
+function initAllLayers() {
+  if (allData)     { initPointsLayers(); initHexLayer(); }
+  if (streetData)  { initStreetLayers(); }
+  applyAllFilters();
+  setView(currentView);
+}
+
+// ── Style switcher ─────────────────────────────────────────────────────────
+function setMapStyle(styleKey) {
+  currentStyle = styleKey;
+  const isLight = LIGHT_STYLES.has(styleKey);
+
+  // Adapt UI chrome for light vs dark basemaps
+  document.body.style.background    = isLight ? '#f5f5f5' : '#0f0f0f';
+  document.body.style.color         = isLight ? '#111'    : '#f0f0f0';
+  document.getElementById('timeline-bar').style.background =
+    isLight ? 'rgba(245,245,245,0.95)' : 'rgba(13,13,22,0.92)';
+  document.getElementById('timeline-bar').style.borderTopColor =
+    isLight ? '#ccc' : '#2a2a3a';
+
+  // Swap the basemap — MapLibre clears all custom layers on style change,
+  // so we re-add everything once the new style has finished loading.
+  map.setStyle(MAP_STYLES[styleKey]);
+  map.once('style.load', initAllLayers);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // LAYER INIT
@@ -653,27 +766,77 @@ function populateFilters() {
   typeList.forEach(type => {
     const opt = document.createElement('option');
     opt.value = type;
+    opt.dataset.type = type;   // keep raw key for count updates
     opt.textContent = lbl(type);
     sel.appendChild(opt);
   });
   sel.addEventListener('change', e => { currentType = e.target.value; applyAllFilters(); });
 }
 
+// Update dropdown option labels with current filtered counts
+function updateFilterCounts(filtered) {
+  const counts = {};
+  filtered.forEach(f => {
+    const tp = f.properties.infraction_type;
+    counts[tp] = (counts[tp] || 0) + 1;
+  });
+  const sel = document.getElementById('filter-type');
+  Array.from(sel.options).forEach(opt => {
+    if (opt.value === 'all') {
+      opt.textContent = `${T[lang].filter_all} (${filtered.length.toLocaleString()})`;
+    } else {
+      const n = counts[opt.value] || 0;
+      opt.textContent = `${lbl(opt.value)} (${n.toLocaleString()})`;
+    }
+  });
+}
+
+// Render ranked bar chart in the stats panel
+function updateStatsPanel(filtered) {
+  const counts = {};
+  filtered.forEach(f => {
+    const tp = f.properties.infraction_type;
+    counts[tp] = (counts[tp] || 0) + 1;
+  });
+  const total   = filtered.length || 1;
+  const sorted  = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const maxCount = sorted.length ? sorted[0][1] : 1;
+
+  document.getElementById('stats-rows').innerHTML = sorted.map(([type, count], i) => {
+    const pct     = Math.round(100 * count / total);
+    const barPct  = Math.round(100 * count / maxCount);
+    const color   = TYPE_COLORS[typeList.indexOf(type) % TYPE_COLORS.length] || '#e63946';
+    return `
+      <div class="stats-row">
+        <div class="stats-row-label">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lbl(type)}</span>
+          <span style="display:flex;gap:3px;flex-shrink:0">
+            <span class="s-count">${count.toLocaleString()}</span>
+            <span class="s-pct">${pct}%</span>
+          </span>
+        </div>
+        <div class="stats-bar-bg">
+          <div class="stats-bar" style="width:${barPct}%;background:${color}"></div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function toggleStats() {
+  document.getElementById('stats-panel').classList.toggle('collapsed');
+}
+
 function applyAllFilters() {
   const filtered = getFilteredFeatures();
   const fc = { type: 'FeatureCollection', features: filtered };
 
-  // Update point/heatmap source
-  if (map.getSource('points')) map.getSource('points').setData(fc);
-
-  // Recompute and update hexbins
+  if (map.getSource('points'))  map.getSource('points').setData(fc);
   if (map.getSource('hexbins')) map.getSource('hexbins').setData(computeHexbins(filtered));
-
-  // Street filter (type-only, timeline doesn't affect streets since they're pre-aggregated)
-  if (map.getLayer('streets-line')) {
+  if (map.getLayer('streets-line'))
     map.setFilter('streets-line', currentType === 'all' ? null : ['==', ['get', 'top_infraction'], currentType]);
-  }
 
+  updateFilterCounts(filtered);
+  updateStatsPanel(filtered);
   updateStats(filtered.length);
 }
 
@@ -685,57 +848,82 @@ function updateStats(count) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// TIMELINE
+// TIMELINE (dual-handle range)
 // ════════════════════════════════════════════════════════════════════════════
 function initTimeline() {
-  // Build sorted unique months from data
   const monthSet = new Set();
   allData.features.forEach(f => {
     const m = (f.properties.data_data || '').substring(0, 7);
     if (m.length === 7) monthSet.add(m);
   });
   months = [...monthSet].sort();
+  const max = months.length - 1;
 
-  const slider = document.getElementById('timeline-slider');
-  slider.max   = months.length - 1;
-  slider.value = months.length - 1;  // start at end (show all)
-  currentMonthIdx = months.length - 1;
+  const sStart = document.getElementById('slider-start');
+  const sEnd   = document.getElementById('slider-end');
+  sStart.max   = max;   sStart.value = 0;
+  sEnd.max     = max;   sEnd.value   = max;
+  startMonthIdx = 0;
+  endMonthIdx   = max;
 
-  // Year tick labels (show Jan of each year)
-  const labels = document.getElementById('timeline-labels');
-  const years  = [...new Set(months.map(m => m.substring(0, 4)))];
-  labels.innerHTML = years.map(y => `<span>${y}</span>`).join('');
+  // Year tick labels
+  const years = [...new Set(months.map(m => m.substring(0, 4)))];
+  document.getElementById('timeline-labels').innerHTML =
+    years.map(y => `<span>${y}</span>`).join('');
 
-  updateTimelineLabel();
   updateTimelineFill();
+  updateTimelineLabel();
 
-  slider.addEventListener('input', () => {
-    currentMonthIdx = parseInt(slider.value);
-    updateTimelineLabel();
+  // Prevent handles crossing — start can't exceed end and vice versa
+  sStart.addEventListener('input', () => {
+    if (parseInt(sStart.value) > parseInt(sEnd.value))
+      sStart.value = sEnd.value;
+    startMonthIdx = parseInt(sStart.value);
     updateTimelineFill();
+    updateTimelineLabel();
+    applyAllFilters();
+  });
+
+  sEnd.addEventListener('input', () => {
+    if (parseInt(sEnd.value) < parseInt(sStart.value))
+      sEnd.value = sStart.value;
+    endMonthIdx = parseInt(sEnd.value);
+    updateTimelineFill();
+    updateTimelineLabel();
     applyAllFilters();
   });
 }
 
 function updateTimelineLabel() {
-  const el = document.getElementById('timeline-current');
   if (!months.length) return;
-  const m = months[currentMonthIdx];
-  const [year, month] = m.split('-');
-  const monthNames = T[lang].month_names;
-  el.innerHTML = `<strong>${monthNames[parseInt(month)-1]} ${year}</strong>`;
+  const mn = T[lang].month_names;
+  const fmt = idx => {
+    const [y, m] = months[idx].split('-');
+    return `${mn[parseInt(m)-1]} ${y}`;
+  };
+  const el = document.getElementById('timeline-current');
+  if (startMonthIdx === endMonthIdx) {
+    el.innerHTML = `<strong>${fmt(startMonthIdx)}</strong>`;
+  } else {
+    el.innerHTML = `<strong>${fmt(startMonthIdx)}</strong><br><strong>${fmt(endMonthIdx)}</strong>`;
+  }
 }
 
 function updateTimelineFill() {
-  const slider = document.getElementById('timeline-slider');
+  const sStart = document.getElementById('slider-start');
+  const sEnd   = document.getElementById('slider-end');
+  const max    = parseInt(sEnd.max);
+  const left   = (parseInt(sStart.value) / max) * 100;
+  const right  = (parseInt(sEnd.value)   / max) * 100;
   const fill   = document.getElementById('timeline-fill');
-  const pct    = (parseInt(slider.value) / parseInt(slider.max)) * 100;
-  fill.style.width = pct + '%';
+  fill.style.left  = left + '%';
+  fill.style.width = (right - left) + '%';
 }
 
 function togglePlay() {
   const btn    = document.getElementById('play-btn');
-  const slider = document.getElementById('timeline-slider');
+  const sStart = document.getElementById('slider-start');
+  const sEnd   = document.getElementById('slider-end');
 
   if (playInterval) {
     clearInterval(playInterval);
@@ -744,27 +932,39 @@ function togglePlay() {
     return;
   }
 
-  // If already at end, restart from beginning
-  if (parseInt(slider.value) >= parseInt(slider.max)) {
-    slider.value = 0;
-    currentMonthIdx = 0;
+  // Sliding window: preserve the window size and advance it forward.
+  // If the end handle is already at max, restart from the beginning.
+  const windowSize = endMonthIdx - startMonthIdx;
+  const max        = months.length - 1;
+
+  if (endMonthIdx >= max) {
+    // Reset to start keeping same window size
+    sStart.value = 0;
+    sEnd.value   = Math.min(windowSize, max);
+    startMonthIdx = 0;
+    endMonthIdx   = parseInt(sEnd.value);
+    updateTimelineFill();
+    updateTimelineLabel();
+    applyAllFilters();
   }
 
   btn.textContent = '⏸';
   playInterval = setInterval(() => {
-    const next = parseInt(slider.value) + 1;
-    if (next > parseInt(slider.max)) {
+    const newEnd = endMonthIdx + 1;
+    if (newEnd > max) {
       clearInterval(playInterval);
       playInterval = null;
       btn.textContent = '▶';
       return;
     }
-    slider.value    = next;
-    currentMonthIdx = next;
-    updateTimelineLabel();
+    endMonthIdx   = newEnd;
+    startMonthIdx = Math.max(0, newEnd - windowSize);
+    sEnd.value    = endMonthIdx;
+    sStart.value  = startMonthIdx;
     updateTimelineFill();
+    updateTimelineLabel();
     applyAllFilters();
-  }, 180);  // ~180ms per month step
+  }, 180);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
