@@ -207,11 +207,16 @@
     #data-note { position: absolute; bottom: 52px; left: 10px; font-size: 0.65rem; color: #555; z-index: 5; pointer-events: none; }
     #data-note a { color: #4a9eff; text-decoration: none; pointer-events: all; }
 
+    /* ── Left panel column ──────────────────────────────────────────────── */
+    #left-panels {
+      position: absolute; top: 10px; left: 10px; width: 220px;
+      display: flex; flex-direction: column; gap: 6px; z-index: 8;
+    }
+
     /* ── Stats panel ────────────────────────────────────────────────────── */
     #stats-panel {
-      position: absolute; top: 10px; left: 10px; width: 220px;
-      background: rgba(13,13,22,0.92); border: 1px solid #2a2a3a;
-      border-radius: 8px; z-index: 8; overflow: hidden;
+      background: rgba(13,13,22,0.92); border: 1px solid #e63946;
+      border-radius: 8px; overflow: hidden;
       transition: height 0.2s ease;
     }
     #stats-header {
@@ -232,10 +237,8 @@
 
     /* ── Rankings panel ─────────────────────────────────────────────────── */
     #rankings-panel {
-      position: absolute; top: 10px; left: 10px; width: 220px;
-      background: rgba(13,13,22,0.92); border: 1px solid #2a2a3a;
-      border-radius: 8px; z-index: 8; overflow: hidden;
-      /* Positioned below stats panel via JS (top updated dynamically) */
+      background: rgba(13,13,22,0.92); border: 1px solid #4a9eff;
+      border-radius: 8px; overflow: hidden;
     }
     #rankings-header {
       display: flex; align-items: center; justify-content: space-between;
@@ -398,31 +401,33 @@
   </div>
 
   <!-- Stats panel -->
-  <div id="stats-panel">
-    <div id="stats-header" onclick="toggleStats()">
-      <span data-i18n="stats_title">Top infractions</span>
-      <span id="stats-toggle">▾</span>
-    </div>
-    <div id="stats-body">
-      <div id="stats-rows"></div>
-    </div>
-  </div>
-
-  <!-- Rankings panel -->
-  <div id="rankings-panel" class="collapsed">
-    <div id="rankings-header" onclick="toggleRankings()">
-      <span data-i18n="rankings_title">City rankings</span>
-      <span id="rankings-toggle">▾</span>
-    </div>
-    <div id="rankings-body">
-      <div id="rankings-mode">
-        <button class="rmode-btn active" id="rmode-total"  onclick="setRankMode('total')"  data-i18n="rmode_total">Total</button>
-        <button class="rmode-btn"        id="rmode-perkm"  onclick="setRankMode('perkm')"  data-i18n="rmode_perkm">Per km road</button>
+  <div id="left-panels">
+    <div id="stats-panel">
+      <div id="stats-header" onclick="toggleStats()">
+        <span data-i18n="stats_title">Top infractions</span>
+        <span id="stats-toggle">▾</span>
       </div>
-      <select id="rankings-type-filter" onchange="renderRankings()">
-        <option value="all" data-i18n="filter_all">All</option>
-      </select>
-      <div id="rankings-list"></div>
+      <div id="stats-body">
+        <div id="stats-rows"></div>
+      </div>
+    </div>
+
+    <!-- Rankings panel -->
+    <div id="rankings-panel" class="collapsed">
+      <div id="rankings-header" onclick="toggleRankings()">
+        <span data-i18n="rankings_title">City rankings</span>
+        <span id="rankings-toggle">▾</span>
+      </div>
+      <div id="rankings-body">
+        <div id="rankings-mode">
+          <button class="rmode-btn active" id="rmode-total"  onclick="setRankMode('total')"  data-i18n="rmode_total">Total</button>
+          <button class="rmode-btn"        id="rmode-perkm"  onclick="setRankMode('perkm')"  data-i18n="rmode_perkm">Per km road</button>
+        </div>
+        <select id="rankings-type-filter" onchange="renderRankings()">
+          <option value="all" data-i18n="filter_all">All</option>
+        </select>
+        <div id="rankings-list"></div>
+      </div>
     </div>
   </div>
 
@@ -1063,6 +1068,7 @@ function updateStatsPanel(features, preMerged) {
 
 function toggleStats() {
   document.getElementById('stats-panel').classList.toggle('collapsed');
+  setTimeout(positionRankingsPanel, 220); // wait for CSS transition
 }
 
 function applyAllFilters() {
@@ -1277,13 +1283,27 @@ function closePointPopup() {
 // ════════════════════════════════════════════════════════════════════════════
 
 // Build municipality → {total, byType} aggregations from allData.
-// Relies on the `municipio` property written by fetch_data.py's spatial join
-// against data/municipios.geojson — no authority string parsing needed.
+// Uses `municipio` property (written by fetch_data.py spatial join) when
+// available. Falls back to a simple authority name parse so the rankings
+// panel is still useful before the first spatial-join run.
+function getMuni(f) {
+  if (f.properties.municipio) return f.properties.municipio;
+  // Fallback: extract city from authority string
+  const a = f.properties.autoridade || '';
+  let m = a.match(/Pol[íi]cia Municipal\s*[-–]\s*(.+)/i);
+  if (m) return m[1].trim();
+  m = a.match(/GNR\s*[-–].*\bde\s+([^-–\n]+)/i);
+  if (m) return m[1].trim();
+  m = a.match(/PSP\s*[-–]\s*([^-–]+)/i);
+  if (m) { const c = m[1].trim(); if (c.length > 3) return c; }
+  return null;
+}
+
 function buildMunicipalityStats() {
   const stats = {};
   allData.features.forEach(f => {
-    const muni = f.properties.municipio;
-    if (!muni) return;  // null = outside all polygons (bad GPS), skip
+    const muni = getMuni(f);
+    if (!muni) return;
     const type = f.properties.infraction_type;
     if (!stats[muni]) stats[muni] = { total: 0, byType: {} };
     stats[muni].total++;
@@ -1316,11 +1336,11 @@ function computeRoadLengthPerMunicipality() {
 
     const nearby = allData.features.find(pt => {
       const [plon, plat] = pt.geometry.coordinates;
-      return pt.properties.municipio &&
+      return getMuni(pt) &&
              Math.abs(plon - mlon) < 0.05 && Math.abs(plat - mlat) < 0.05;
     });
     if (!nearby) return;
-    const muni = nearby.properties.municipio;
+    const muni = getMuni(nearby);
 
     let segLen = 0;
     for (let i = 0; i < coords.length - 1; i++) {
@@ -1403,27 +1423,11 @@ function renderRankings() {
 }
 
 function toggleRankings() {
-  const panel = document.getElementById('rankings-panel');
-  panel.classList.toggle('collapsed');
-  positionRankingsPanel();
+  document.getElementById('rankings-panel').classList.toggle('collapsed');
 }
 
-// Position rankings panel below stats panel dynamically
-function positionRankingsPanel() {
-  const stats    = document.getElementById('stats-panel');
-  const rankings = document.getElementById('rankings-panel');
-  const statsBottom = stats.getBoundingClientRect().bottom;
-  const mapTop      = document.getElementById('map-wrap').getBoundingClientRect().top;
-  rankings.style.top = (statsBottom - mapTop + 8) + 'px';
-}
-
-// Re-position when stats panel collapses/expands
-const _origToggleStats = window.toggleStats;
-function toggleStats() {
-  if (_origToggleStats) _origToggleStats();
-  else document.getElementById('stats-panel').classList.toggle('collapsed');
-  setTimeout(positionRankingsPanel, 220); // wait for CSS transition
-}
+// no-op kept for any lingering calls
+function positionRankingsPanel() {}
 
 // Update rankings dropdown labels when language changes
 function updateRankingsLang() {
