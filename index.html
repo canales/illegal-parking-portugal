@@ -236,7 +236,7 @@
       <button class="lang-btn active" onclick="setLang('en')">EN</button>
       <button class="lang-btn" onclick="setLang('pt')">PT</button>
     </div>
-    <a class="survey-btn" href="https://lisboaparticipa.pt/pt/mais-participacao/ilegal-parking/create" target="_blank">
+    <a class="survey-btn" href="https://informacao.lisboa.pt/agenda/municipal/estacionamento-abusivo-e-mobilidade-pedonal" target="_blank">
       📋 <span data-i18n="survey_btn">Take the Lisbon City Hall Survey →</span>
     </a>
   </div>
@@ -640,8 +640,18 @@ map.on('load', async () => {
 
 // ── Re-add all layers (called on initial load and after every style swap) ──
 function initAllLayers() {
-  if (allData)     { initPointsLayers(); initHexLayer(); }
-  if (streetData)  { initStreetLayers(); }
+  // Defensively remove any leftover sources/layers before adding.
+  // After setStyle() MapLibre clears them, but if there's a race condition
+  // this prevents "source already exists" errors that silently abort the function.
+  ['heatmap','points-circle','hex-extrusion','streets-line','streets-highlight'].forEach(id => {
+    if (map.getLayer(id)) map.removeLayer(id);
+  });
+  ['points','hexbins','streets'].forEach(id => {
+    if (map.getSource(id)) map.removeSource(id);
+  });
+
+  if (allData)    { initPointsLayers(); initHexLayer(); }
+  if (streetData) { initStreetLayers(); }
   applyAllFilters();
   setView(currentView);
 }
@@ -830,13 +840,17 @@ function updateFilterCounts(filtered) {
 }
 
 // Render ranked bar chart in the stats panel
-function updateStatsPanel(filtered) {
-  const counts = {};
-  filtered.forEach(f => {
-    const tp = f.properties.infraction_type;
-    counts[tp] = (counts[tp] || 0) + 1;
-  });
-  const total   = filtered.length || 1;
+// features: array of feature-like objects with properties.infraction_type
+// preMerged: optional pre-computed {type: count} object (used for streets view)
+function updateStatsPanel(features, preMerged) {
+  const counts = preMerged || {};
+  if (!preMerged) {
+    features.forEach(f => {
+      const tp = f.properties.infraction_type;
+      if (tp) counts[tp] = (counts[tp] || 0) + 1;
+    });
+  }
+  const total   = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
   const sorted  = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const maxCount = sorted.length ? sorted[0][1] : 1;
 
@@ -1035,8 +1049,12 @@ map.on('mousemove',  'points-circle', e => {
 });
 
 // Points — click → popup with GSV + Mapillary
+// Note: e.stopPropagation() does NOT prevent map-level click handlers in MapLibre.
+// We use a flag instead so the generic "click empty space" handler knows to skip.
+let _clickedFeature = false;
+
 map.on('click', 'points-circle', e => {
-  e.stopPropagation();   // prevent the "click empty space" handler from firing
+  _clickedFeature = true;
   const p      = e.features[0].properties;
   const lngLat = e.lngLat;
 
@@ -1045,15 +1063,11 @@ map.on('click', 'points-circle', e => {
     `📅 ${(p.data_data||'').substring(0,10)} ${t('tip_at')} ${p.data_hora||'—'}`;
   document.getElementById('pp-auth').textContent = `🚔 ${p.autoridade||'—'}`;
 
-  // Google Street View — drop user into street-level pano at this location
   document.getElementById('pp-gsv').href =
     `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lngLat.lat},${lngLat.lng}`;
-
-  // Mapillary — search for street-level photos near this point
   document.getElementById('pp-mapillary').href =
     `https://www.mapillary.com/app/?lat=${lngLat.lat}&lng=${lngLat.lng}&z=17`;
 
-  // Position popup near the click, keeping it inside the viewport
   const popup = document.getElementById('point-popup');
   popup.style.display = 'block';
   const rect   = document.getElementById('map').getBoundingClientRect();
@@ -1075,22 +1089,49 @@ function closePointPopup() {
 // VIEWPORT-REACTIVE STATS PANEL
 // ════════════════════════════════════════════════════════════════════════════
 function updateViewportStats() {
-  // Only run when the points layer is actually visible
+  // Streets view — aggregate type_breakdown from visible street segments
+  if (currentView === 'streets' && map.getLayer('streets-line')) {
+    const rendered = map.queryRenderedFeatures({ layers: ['streets-line'] });
+    if (rendered.length > 0) {
+      // Merge breakdown objects from all visible street segments
+      const merged = {};
+      const seen = new Set();
+      rendered.forEach(f => {
+        // De-duplicate by feature id
+        const key = f.id ?? f.properties.street_name ?? JSON.stringify(f.geometry.coordinates[0]);
+        if (seen.has(key)) return;
+        seen.add(key);
+        try {
+          const bd = JSON.parse(f.properties.type_breakdown || '{}');
+          Object.entries(bd).forEach(([type, count]) => {
+            merged[type] = (merged[type] || 0) + count;
+          });
+        } catch (_) {}
+      });
+      // Convert to feature-like objects that updateStatsPanel can consume
+      const fakeFeatures = Object.entries(merged).map(([type, count]) => ({
+        properties: { infraction_type: type, _count: count }
+      }));
+      updateStatsPanel(fakeFeatures, merged);
+      return;
+    }
+  }
+
+  // Heatmap / points view — query points-circle layer
   if (!map.getLayer('points-circle')) return;
   const vis = map.getLayoutProperty('points-circle', 'visibility');
-  if (vis === 'none') return;
-
-  // queryRenderedFeatures returns what's currently visible on screen
-  const rendered = map.queryRenderedFeatures({ layers: ['points-circle'] });
-
-  if (rendered.length === 0) {
-    // If nothing rendered (e.g. zoomed to ocean), fall back to full filtered set
+  if (vis === 'none') {
     const filtered = getFilteredFeatures();
     updateStatsPanel(filtered);
     return;
   }
 
-  // De-duplicate — rendered features can contain duplicates for clustered tiles
+  const rendered = map.queryRenderedFeatures({ layers: ['points-circle'] });
+  if (rendered.length === 0) {
+    updateStatsPanel(getFilteredFeatures());
+    return;
+  }
+
   const seen = new Set();
   const unique = rendered.filter(f => {
     const key = `${f.properties.data_data}_${f.geometry.coordinates}`;
@@ -1098,8 +1139,7 @@ function updateViewportStats() {
     seen.add(key);
     return true;
   });
-
-  updateStatsPanel(unique.map(f => f));  // pass as array of feature-like objects
+  updateStatsPanel(unique);
 }
 
 // Hook into map movement — update stats whenever the user pans or zooms
@@ -1125,6 +1165,7 @@ map.on('mouseleave', 'streets-line', () => map.getCanvas().style.cursor = '');
 // STREET PANEL (click → right drawer)
 // ════════════════════════════════════════════════════════════════════════════
 map.on('click', 'streets-line', e => {
+  _clickedFeature = true;
   const feat   = e.features[0];
   const p      = feat.properties;
   const lngLat = e.lngLat;
@@ -1164,13 +1205,15 @@ map.on('click', 'streets-line', e => {
 });
 
 map.on('click', e => {
-  const hits = map.queryRenderedFeatures(e.point, { layers: ['streets-line','points-circle','hex-extrusion'] });
-  if (!hits.length) {
-    closePanel();
-    closePointPopup();
-    hideTip();
-    if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], '']);
+  if (_clickedFeature) {
+    // A layer-specific click handler already ran — don't close anything
+    _clickedFeature = false;
+    return;
   }
+  closePanel();
+  closePointPopup();
+  hideTip();
+  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], '']);
 });
 
 function openPanel()  { document.getElementById('street-panel').classList.add('open'); }
