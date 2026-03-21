@@ -209,7 +209,7 @@
 
     /* ── Left panel column ──────────────────────────────────────────────── */
     #left-panels {
-      position: absolute; top: 10px; left: 10px; width: 220px;
+      position: absolute; top: 10px; left: 10px; width: 260px;
       display: flex; flex-direction: column; gap: 6px; z-index: 8;
     }
 
@@ -223,15 +223,16 @@
       display: flex; align-items: center; justify-content: space-between;
       padding: 8px 11px; cursor: pointer; user-select: none;
     }
-    #stats-header span { font-size: 0.7rem; font-weight: 700; color: #ccc; text-transform: uppercase; letter-spacing: 0.6px; }
+    #stats-header span { font-size: 0.76rem; font-weight: 700; color: #ccc; text-transform: uppercase; letter-spacing: 0.6px; }
+    #stats-toggle { font-size: 0.68rem; color: #555; transition: transform 0.2s; }
     #stats-toggle { font-size: 0.65rem; color: #555; transition: transform 0.2s; }
     #stats-panel.collapsed #stats-toggle { transform: rotate(-90deg); }
     #stats-body { padding: 4px 11px 10px; }
     #stats-panel.collapsed #stats-body { display: none; }
     .stats-row { margin-bottom: 7px; }
-    .stats-row-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.68rem; color: #bbb; margin-bottom: 2px; }
-    .stats-row-label .s-count { color: #e63946; font-weight: 700; font-size: 0.72rem; flex-shrink: 0; margin-left: 6px; }
-    .stats-row-label .s-pct   { color: #555; font-size: 0.62rem; flex-shrink: 0; margin-left: 4px; }
+    .stats-row-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.76rem; color: #bbb; margin-bottom: 2px; }
+    .stats-row-label .s-count { color: #e63946; font-weight: 700; font-size: 0.78rem; flex-shrink: 0; margin-left: 6px; }
+    .stats-row-label .s-pct   { color: #555; font-size: 0.68rem; flex-shrink: 0; margin-left: 4px; }
     .stats-bar-bg { height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
     .stats-bar    { height: 100%; border-radius: 2px; transition: width 0.35s ease; }
 
@@ -244,7 +245,8 @@
       display: flex; align-items: center; justify-content: space-between;
       padding: 8px 11px; cursor: pointer; user-select: none;
     }
-    #rankings-header span { font-size: 0.7rem; font-weight: 700; color: #ccc; text-transform: uppercase; letter-spacing: 0.6px; }
+    #rankings-header span { font-size: 0.76rem; font-weight: 700; color: #ccc; text-transform: uppercase; letter-spacing: 0.6px; }
+    #rankings-toggle { font-size: 0.68rem; color: #555; transition: transform 0.2s; }
     #rankings-toggle { font-size: 0.65rem; color: #555; transition: transform 0.2s; }
     #rankings-panel.collapsed #rankings-toggle { transform: rotate(-90deg); }
     #rankings-body { padding: 6px 11px 10px; }
@@ -276,13 +278,13 @@
     #rankings-list::-webkit-scrollbar { width: 3px; }
     #rankings-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
     .rank-row { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; }
-    .rank-num  { font-size: 0.6rem; color: #444; min-width: 14px; text-align: right; flex-shrink: 0; }
+    .rank-num  { font-size: 0.66rem; color: #444; min-width: 14px; text-align: right; flex-shrink: 0; }
     .rank-bar-wrap { flex: 1; }
-    .rank-name { font-size: 0.67rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .rank-name { font-size: 0.74rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
     .rank-meta { display: flex; gap: 4px; align-items: center; }
     .rank-bar-bg { flex: 1; height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
     .rank-bar    { height: 100%; background: #e63946; border-radius: 2px; }
-    .rank-val    { font-size: 0.65rem; color: #e63946; font-weight: 700; flex-shrink: 0; }
+    .rank-val    { font-size: 0.72rem; color: #e63946; font-weight: 700; flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -1360,12 +1362,18 @@ function initRankings() {
   muniStats       = buildMunicipalityStats();
   muniRoadLengths = computeRoadLengthPerMunicipality();
 
-  // Populate infraction type filter inside rankings
+  // Populate infraction type filter inside rankings — sorted by total count
+  // descending with counts shown, matching the main infraction dropdown
   const sel = document.getElementById('rankings-type-filter');
-  typeList.forEach(type => {
+  const totalCounts = {};
+  allData.features.forEach(f => {
+    const tp = f.properties.infraction_type;
+    totalCounts[tp] = (totalCounts[tp] || 0) + 1;
+  });
+  typeList.forEach(type => {  // typeList already sorted by count desc
     const opt = document.createElement('option');
     opt.value = type;
-    opt.textContent = lbl(type);
+    opt.textContent = `${lbl(type)} (${(totalCounts[type] || 0).toLocaleString()})`;
     sel.appendChild(opt);
   });
 
