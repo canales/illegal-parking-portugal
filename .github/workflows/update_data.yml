@@ -25,7 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install osmnx geopandas scipy shapely numpy pandas
+          pip install osmnx==2.0.1 geopandas scipy shapely numpy pandas
 
       - name: Fetch latest infraction data from API
         run: python scripts/fetch_data.py
