@@ -6,10 +6,10 @@ on:
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
-  
- permissions:          # ← add this block
-  contents: write     # ← allows the bot to push commits back
-  
+
+permissions:
+  contents: write
+
 jobs:
   update:
     runs-on: ubuntu-latest
