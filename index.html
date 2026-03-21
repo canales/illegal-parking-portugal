@@ -8,72 +8,103 @@
   <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #f0f0f0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #f0f0f0;
+           height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-    /* ── Banner ── */
+    /* ── Banner ─────────────────────────────────────────────────────────── */
     #banner {
-      background: #1a1a2e;
-      border-bottom: 2px solid #e63946;
-      padding: 10px 16px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 8px;
-      z-index: 10;
-      flex-shrink: 0;
+      background: #1a1a2e; border-bottom: 2px solid #e63946;
+      padding: 10px 16px; display: flex; align-items: center;
+      justify-content: space-between; flex-wrap: wrap; gap: 8px; z-index: 10; flex-shrink: 0;
     }
-    #banner .title { font-size: 1.05rem; font-weight: 700; color: #fff; line-height: 1.3; }
+    #banner .title  { font-size: 1.05rem; font-weight: 700; color: #fff; line-height: 1.3; }
     #banner .subtitle { font-size: 0.75rem; color: #aaa; margin-top: 2px; }
-    #banner .stats { display: flex; gap: 18px; flex-wrap: wrap; }
-    .stat { text-align: center; }
-    .stat .number { font-size: 1.3rem; font-weight: 800; color: #e63946; }
-    .stat .label { font-size: 0.65rem; color: #999; text-transform: uppercase; letter-spacing: 0.5px; }
-    .banner-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    #banner .stats  { display: flex; gap: 18px; flex-wrap: wrap; }
+    .stat           { text-align: center; }
+    .stat .number   { font-size: 1.3rem; font-weight: 800; color: #e63946; }
+    .stat .label    { font-size: 0.65rem; color: #999; text-transform: uppercase; letter-spacing: 0.5px; }
+    .banner-right   { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
     /* Language toggle */
-    #lang-toggle { display: flex; border: 1px solid #444; border-radius: 5px; overflow: hidden; font-size: 0.75rem; }
-    .lang-btn { padding: 5px 10px; background: #222; color: #aaa; border: none; cursor: pointer; font-weight: 600; transition: all 0.15s; }
+    #lang-toggle    { display: flex; border: 1px solid #444; border-radius: 5px; overflow: hidden; }
+    .lang-btn       { padding: 5px 10px; background: #222; color: #aaa; border: none; cursor: pointer; font-weight: 600; font-size: 0.75rem; transition: all 0.15s; }
     .lang-btn.active { background: #e63946; color: #fff; }
     .lang-btn:hover:not(.active) { background: #333; }
-
-    .survey-btn {
-      background: #e63946; color: white; border: none;
-      padding: 7px 14px; border-radius: 6px; font-size: 0.8rem; font-weight: 600;
-      cursor: pointer; text-decoration: none; white-space: nowrap;
-    }
+    .survey-btn     { background: #e63946; color: white; border: none; padding: 7px 14px;
+                      border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+                      text-decoration: none; white-space: nowrap; }
     .survey-btn:hover { background: #c1121f; }
 
-    /* ── Controls bar ── */
+    /* ── Controls bar ───────────────────────────────────────────────────── */
     #controls {
       background: #111; border-bottom: 1px solid #222;
       padding: 7px 16px; display: flex; gap: 14px;
       align-items: center; flex-wrap: wrap; z-index: 10; flex-shrink: 0;
     }
-    #controls label { font-size: 0.72rem; color: #888; display: flex; align-items: center; gap: 6px; }
+    #controls label  { font-size: 0.72rem; color: #888; display: flex; align-items: center; gap: 6px; }
     #controls select { background: #222; border: 1px solid #333; color: #eee; padding: 4px 8px; border-radius: 4px; font-size: 0.78rem; }
-    .layer-toggle { display: flex; gap: 6px; }
-    .toggle-btn {
-      background: #222; border: 1px solid #333; color: #aaa;
-      padding: 4px 10px; border-radius: 4px; font-size: 0.72rem; cursor: pointer; transition: all 0.15s;
-    }
-    .toggle-btn.active { background: #e63946; border-color: #e63946; color: white; }
+    .layer-toggle    { display: flex; gap: 6px; }
+    .toggle-btn      { background: #222; border: 1px solid #333; color: #aaa;
+                       padding: 4px 10px; border-radius: 4px; font-size: 0.72rem; cursor: pointer; transition: all 0.15s; }
+    .toggle-btn.active   { background: #e63946; border-color: #e63946; color: white; }
     .toggle-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
-    /* ── Map ── */
+    /* ── Map area ───────────────────────────────────────────────────────── */
     #map-wrap { flex: 1; position: relative; overflow: hidden; }
-    #map { width: 100%; height: 100%; }
+    #map      { width: 100%; height: 100%; }
 
-    /* ── Hover tooltip (points only) ── */
+    /* ── Timeline bar ───────────────────────────────────────────────────── */
+    #timeline-bar {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: rgba(13,13,22,0.92); border-top: 1px solid #2a2a3a;
+      padding: 10px 16px 12px; z-index: 10;
+      display: flex; align-items: center; gap: 12px;
+    }
+    #play-btn {
+      background: #e63946; border: none; color: white;
+      width: 30px; height: 30px; border-radius: 50%; font-size: 0.75rem;
+      cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s;
+    }
+    #play-btn:hover { background: #c1121f; }
+    #timeline-wrap  { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+    #timeline-track { position: relative; height: 20px; display: flex; align-items: center; }
+    #timeline-slider {
+      width: 100%; -webkit-appearance: none; height: 3px;
+      background: #333; border-radius: 2px; outline: none; cursor: pointer;
+    }
+    #timeline-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+      background: #e63946; cursor: pointer; border: 2px solid #fff;
+    }
+    #timeline-slider::-moz-range-thumb {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #e63946; cursor: pointer; border: 2px solid #fff;
+    }
+    #timeline-fill {
+      position: absolute; left: 0; height: 3px; background: #e63946;
+      border-radius: 2px; pointer-events: none; top: 50%; transform: translateY(-50%);
+    }
+    #timeline-labels {
+      display: flex; justify-content: space-between;
+      font-size: 0.6rem; color: #555; user-select: none;
+    }
+    #timeline-current {
+      font-size: 0.72rem; color: #ccc; text-align: center;
+      min-width: 110px; flex-shrink: 0;
+    }
+    #timeline-current strong { color: #e63946; }
+
+    /* ── Hover tooltip ──────────────────────────────────────────────────── */
     #hover-tip {
       position: absolute; background: rgba(18,18,28,0.96); border: 1px solid #333;
       border-radius: 6px; padding: 9px 13px; font-size: 0.78rem;
       pointer-events: none; z-index: 20; display: none; max-width: 240px; line-height: 1.5;
     }
     #hover-tip .tip-type { font-weight: 700; color: #e63946; margin-bottom: 3px; }
-    #hover-tip .tip-row { color: #ccc; }
+    #hover-tip .tip-row  { color: #ccc; }
 
-    /* ── Street panel (right drawer) ── */
+    /* ── Street panel ───────────────────────────────────────────────────── */
     #street-panel {
       position: absolute; top: 0; right: 0; width: 300px; height: 100%;
       background: #13131f; border-left: 1px solid #2a2a3a;
@@ -81,45 +112,34 @@
       transform: translateX(100%); transition: transform 0.25s ease; overflow: hidden;
     }
     #street-panel.open { transform: translateX(0); }
-
-    #panel-header { padding: 14px 16px 10px; border-bottom: 1px solid #2a2a3a; flex-shrink: 0; }
-    #panel-close {
-      float: right; background: none; border: none; color: #666;
-      font-size: 1.1rem; cursor: pointer; line-height: 1; padding: 0 0 0 8px;
-    }
+    #panel-header  { padding: 14px 16px 10px; border-bottom: 1px solid #2a2a3a; flex-shrink: 0; }
+    #panel-close   { float: right; background: none; border: none; color: #666; font-size: 1.1rem; cursor: pointer; }
     #panel-close:hover { color: #fff; }
     #panel-street-name { font-size: 0.95rem; font-weight: 700; color: #fff; margin-right: 24px; line-height: 1.3; }
-    #panel-meta { margin-top: 6px; font-size: 0.72rem; color: #666; }
-    #panel-total { margin-top: 4px; font-size: 0.75rem; color: #888; }
+    #panel-meta    { margin-top: 6px; font-size: 0.72rem; color: #666; }
+    #panel-total   { margin-top: 4px; font-size: 0.75rem; color: #888; }
     #panel-total strong { color: #e63946; font-size: 1rem; }
-
-    #panel-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+    #panel-body    { flex: 1; overflow-y: auto; padding: 14px 16px; }
     #panel-body::-webkit-scrollbar { width: 4px; }
-    #panel-body::-webkit-scrollbar-track { background: #111; }
     #panel-body::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-
     .panel-section-title { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.8px; color: #555; margin-bottom: 10px; }
-
-    .breakdown-row { margin-bottom: 10px; }
+    .breakdown-row  { margin-bottom: 10px; }
     .breakdown-label { display: flex; justify-content: space-between; font-size: 0.72rem; color: #bbb; margin-bottom: 3px; }
     .breakdown-label .count { color: #e63946; font-weight: 700; flex-shrink: 0; margin-left: 8px; }
     .breakdown-bar-bg { height: 5px; background: #222; border-radius: 3px; overflow: hidden; }
-    .breakdown-bar { height: 100%; background: #e63946; border-radius: 3px; transition: width 0.4s ease; }
-
-    #panel-footer { padding: 12px 16px; border-top: 1px solid #2a2a3a; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
-    .panel-link {
-      display: flex; align-items: center; justify-content: center; gap: 7px;
-      padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; font-weight: 600;
-      text-decoration: none; cursor: pointer; border: none;
-    }
+    .breakdown-bar  { height: 100%; background: #e63946; border-radius: 3px; transition: width 0.4s ease; }
+    #panel-footer  { padding: 12px 16px; border-top: 1px solid #2a2a3a; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+    .panel-link    { display: flex; align-items: center; justify-content: center; gap: 7px;
+                     padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; font-weight: 600;
+                     text-decoration: none; border: none; cursor: pointer; }
     .panel-link.gsv { background: #1a73e8; color: white; }
     .panel-link.gsv:hover { background: #1557b0; }
     .panel-link.osm { background: #222; border: 1px solid #333; color: #aaa; }
     .panel-link.osm:hover { background: #2a2a2a; color: #fff; }
 
-    /* ── Legend ── */
+    /* ── Legend ─────────────────────────────────────────────────────────── */
     #legend {
-      position: absolute; bottom: 36px; right: 10px;
+      position: absolute; bottom: 68px; right: 10px;
       background: rgba(15,15,15,0.92); border: 1px solid #333;
       border-radius: 8px; padding: 11px 14px; font-size: 0.7rem; z-index: 5; display: none;
     }
@@ -127,14 +147,14 @@
     .legend-item { display: flex; align-items: center; gap: 7px; margin: 3px 0; color: #bbb; }
     .legend-swatch { width: 28px; height: 5px; border-radius: 3px; flex-shrink: 0; }
 
-    /* ── Data note ── */
-    #data-note { position: absolute; bottom: 8px; left: 10px; font-size: 0.65rem; color: #555; z-index: 5; pointer-events: none; }
+    /* ── Data note ──────────────────────────────────────────────────────── */
+    #data-note { position: absolute; bottom: 52px; left: 10px; font-size: 0.65rem; color: #555; z-index: 5; pointer-events: none; }
     #data-note a { color: #4a9eff; text-decoration: none; pointer-events: all; }
   </style>
 </head>
 <body>
 
-<!-- ── Banner ─────────────────────────────────────────────────────────── -->
+<!-- ── Banner ────────────────────────────────────────────────────────────── -->
 <div id="banner">
   <div>
     <div class="title" data-i18n="title">🚫 Illegal Parking in Portugal</div>
@@ -145,18 +165,9 @@
     </div>
   </div>
   <div class="stats">
-    <div class="stat">
-      <div class="number" id="stat-total">—</div>
-      <div class="label" data-i18n="stat_reports">Reports</div>
-    </div>
-    <div class="stat">
-      <div class="number">2020–2026</div>
-      <div class="label" data-i18n="stat_period">Period</div>
-    </div>
-    <div class="stat">
-      <div class="number" id="stat-types">—</div>
-      <div class="label" data-i18n="stat_types">Types</div>
-    </div>
+    <div class="stat"><div class="number" id="stat-total">—</div><div class="label" data-i18n="stat_reports">Reports</div></div>
+    <div class="stat"><div class="number">2020–2026</div><div class="label" data-i18n="stat_period">Period</div></div>
+    <div class="stat"><div class="number" id="stat-types">—</div><div class="label" data-i18n="stat_types">Types</div></div>
   </div>
   <div class="banner-right">
     <div id="lang-toggle">
@@ -169,28 +180,26 @@
   </div>
 </div>
 
-<!-- ── Controls ───────────────────────────────────────────────────────── -->
+<!-- ── Controls ──────────────────────────────────────────────────────────── -->
 <div id="controls">
   <label>
     <span data-i18n="filter_label">Infraction type:</span>
-    <select id="filter-type">
-      <option value="all" data-i18n="filter_all">All</option>
-    </select>
+    <select id="filter-type"><option value="all" data-i18n="filter_all">All</option></select>
   </label>
   <label>
     <span data-i18n="view_label">View:</span>
     <div class="layer-toggle">
       <button class="toggle-btn active" id="btn-heat"    onclick="setView('heat')"    data-i18n="view_heat">Heatmap</button>
+      <button class="toggle-btn"        id="btn-hex"     onclick="setView('hex')"     data-i18n="view_hex">3D Hexagons</button>
       <button class="toggle-btn"        id="btn-streets" onclick="setView('streets')" data-i18n="view_streets">By street</button>
       <button class="toggle-btn"        id="btn-points"  onclick="setView('points')"  data-i18n="view_points">Points</button>
     </div>
   </label>
 </div>
 
-<!-- ── Map ────────────────────────────────────────────────────────────── -->
+<!-- ── Map ───────────────────────────────────────────────────────────────── -->
 <div id="map-wrap">
   <div id="map"></div>
-
   <div id="hover-tip"></div>
 
   <!-- Street detail panel -->
@@ -206,16 +215,12 @@
       <div id="breakdown-chart"></div>
     </div>
     <div id="panel-footer">
-      <a id="gsv-link" class="panel-link gsv" href="#" target="_blank">
-        🗺 <span data-i18n="panel_gsv">Open in Google Street View</span>
-      </a>
-      <a id="osm-link" class="panel-link osm" href="#" target="_blank">
-        🔗 <span data-i18n="panel_osm">View on OpenStreetMap</span>
-      </a>
+      <a id="gsv-link" class="panel-link gsv" href="#" target="_blank">🗺 <span data-i18n="panel_gsv">Open in Google Street View</span></a>
+      <a id="osm-link" class="panel-link osm" href="#" target="_blank">🔗 <span data-i18n="panel_osm">View on OpenStreetMap</span></a>
     </div>
   </div>
 
-  <!-- Legend -->
+  <!-- Legend (streets view) -->
   <div id="legend">
     <h4 data-i18n="legend_title">Reports per street</h4>
     <div class="legend-item"><div class="legend-swatch" style="background:#FFC300"></div> 1–5</div>
@@ -225,11 +230,23 @@
     <div class="legend-item"><div class="legend-swatch" style="background:#5A1846"></div> 100+</div>
   </div>
 
+  <!-- Timeline bar -->
+  <div id="timeline-bar">
+    <button id="play-btn" onclick="togglePlay()" title="Play / Pause">▶</button>
+    <div id="timeline-wrap">
+      <div id="timeline-track">
+        <div id="timeline-fill"></div>
+        <input type="range" id="timeline-slider" min="0" value="0" step="1" />
+      </div>
+      <div id="timeline-labels"></div>
+    </div>
+    <div id="timeline-current">—</div>
+  </div>
+
   <div id="data-note">
     <span data-i18n="source_label">Source:</span>
     <a href="https://api.denuncia-estacionamento.app" target="_blank">api.denuncia-estacionamento.app</a>
-    · <span data-i18n="road_label">Road network:</span>
-    © <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap contributors</a>
+    · <span data-i18n="road_label">Road network:</span> © <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>
   </div>
 </div>
 
@@ -250,6 +267,7 @@ const T = {
     filter_all:      'All',
     view_label:      'View:',
     view_heat:       'Heatmap',
+    view_hex:        '3D Hexagons',
     view_streets:    'By street',
     view_points:     'Points',
     panel_breakdown: 'Reports by type',
@@ -263,7 +281,11 @@ const T = {
     source_label:    'Source:',
     road_label:      'Road network:',
     tip_at:          'at',
+    tip_hex_count:   'reports',
+    tip_hex_top:     'Most common:',
     streets_soon:    'Street data not yet available (coming soon)',
+    timeline_all:    'All time',
+    month_names:     ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   },
   pt: {
     title:           '🚫 Estacionamento Ilegal em Portugal',
@@ -277,6 +299,7 @@ const T = {
     filter_all:      'Todos',
     view_label:      'Vista:',
     view_heat:       'Mapa de calor',
+    view_hex:        'Hexágonos 3D',
     view_streets:    'Por rua',
     view_points:     'Pontos',
     panel_breakdown: 'Denúncias por tipo',
@@ -290,83 +313,146 @@ const T = {
     source_label:    'Fonte:',
     road_label:      'Rede viária:',
     tip_at:          'às',
+    tip_hex_count:   'denúncias',
+    tip_hex_top:     'Tipo mais comum:',
     streets_soon:    'Dados por rua ainda não disponíveis (em breve)',
+    timeline_all:    'Todo o período',
+    month_names:     ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'],
   }
 };
 
 const LABELS = {
   en: {
-    passeios:                      'Pavement / sidewalk',
-    garagem:                       'In front of garage',
-    deficiente:                    'Disabled bay',
-    abandonado:                    'Abandoned vehicle',
-    na_passadeira:                 'On a crosswalk',
-    faixa_de_rodagem:              'On the carriageway',
-    residentes_apenas:             'Residents-only zone',
-    eletrico:                      'Tram stop',
-    praca_taxis:                   'Taxi rank',
-    passadeiras5m:                 'Within 5m of crosswalk',
-    segunda_fila:                  'Double-parked',
-    'linha_amarela_ou_contínua':   'Yellow / continuous line',
-    cargas_descargas:              'Loading zone',
-    'falta_de_espaço':             'No space / blocking traffic',
-    ciclovia:                      'Cycle lane',
-    paragem_tp:                    'Bus / transit stop',
-    cruzamento:                    'Junction / intersection',
-    sinal_estacionamento_proibido: 'No-parking sign',
-    carro_especifico:              'Specific vehicle',
-    motociclo:                     'Motorcycle zone',
+    passeios:'Pavement/sidewalk', garagem:'In front of garage', deficiente:'Disabled bay',
+    abandonado:'Abandoned vehicle', na_passadeira:'On a crosswalk', faixa_de_rodagem:'On the carriageway',
+    residentes_apenas:'Residents-only zone', eletrico:'Tram stop', praca_taxis:'Taxi rank',
+    passadeiras5m:'Within 5m of crosswalk', segunda_fila:'Double-parked',
+    'linha_amarela_ou_contínua':'Yellow/continuous line', cargas_descargas:'Loading zone',
+    'falta_de_espaço':'No space/blocking traffic', ciclovia:'Cycle lane',
+    paragem_tp:'Bus/transit stop', cruzamento:'Junction/intersection',
+    sinal_estacionamento_proibido:'No-parking sign', carro_especifico:'Specific vehicle',
+    motociclo:'Motorcycle zone',
   },
   pt: {
-    passeios:                      'Passeio pedonal',
-    garagem:                       'Frente de garagem',
-    deficiente:                    'Lugar de deficiente',
-    abandonado:                    'Veículo abandonado',
-    na_passadeira:                 'Numa passadeira',
-    faixa_de_rodagem:              'Faixa de rodagem',
-    residentes_apenas:             'Zona de residentes',
-    eletrico:                      'Paragem de elétrico',
-    praca_taxis:                   'Praça de táxis',
-    passadeiras5m:                 'A 5m de passadeira',
-    segunda_fila:                  'Segunda fila',
-    'linha_amarela_ou_contínua':   'Linha amarela/contínua',
-    cargas_descargas:              'Carga e descarga',
-    'falta_de_espaço':             'Falta de espaço',
-    ciclovia:                      'Ciclovia',
-    paragem_tp:                    'Paragem de transporte público',
-    cruzamento:                    'Cruzamento',
-    sinal_estacionamento_proibido: 'Sinal de estacionamento proibido',
-    carro_especifico:              'Veículo específico',
-    motociclo:                     'Lugar de motociclo',
+    passeios:'Passeio pedonal', garagem:'Frente de garagem', deficiente:'Lugar de deficiente',
+    abandonado:'Veículo abandonado', na_passadeira:'Numa passadeira', faixa_de_rodagem:'Faixa de rodagem',
+    residentes_apenas:'Zona de residentes', eletrico:'Paragem de elétrico', praca_taxis:'Praça de táxis',
+    passadeiras5m:'A 5m de passadeira', segunda_fila:'Segunda fila',
+    'linha_amarela_ou_contínua':'Linha amarela/contínua', cargas_descargas:'Carga e descarga',
+    'falta_de_espaço':'Falta de espaço', ciclovia:'Ciclovia',
+    paragem_tp:'Paragem de transporte público', cruzamento:'Cruzamento',
+    sinal_estacionamento_proibido:'Sinal de estacionamento proibido', carro_especifico:'Veículo específico',
+    motociclo:'Lugar de motociclo',
   }
 };
+
+const TYPE_COLORS = [
+  '#E6194B','#3CB44B','#4363D8','#F58231','#911EB4','#42D4F4','#F032E6',
+  '#BFEF45','#FABED4','#469990','#DCBEFF','#9A6324','#800000','#AAFFC3',
+  '#808000','#FFD8B1','#000075','#A9A9A9','#FF6347','#40E0D0','#EE82EE',
+  '#7CFC00','#FF1493','#1E90FF','#FFD700'
+];
+
+// ── Hex grid constants ───────────────────────────────────────────────────────
+const HEX_SIZE        = 0.003;  // ~300m cell width
+const HEX_HEIGHT_SCALE = 5;     // metres per report (count=100 → 500m tower)
+
+// ════════════════════════════════════════════════════════════════════════════
+// HEX MATH (flat-top axial coordinates)
+// ════════════════════════════════════════════════════════════════════════════
+function hexRound(q, r) {
+  let s = -q - r;
+  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
+  const dq = Math.abs(rq-q), dr = Math.abs(rr-r), ds = Math.abs(rs-s);
+  if (dq > dr && dq > ds) rq = -rr - rs;
+  else if (dr > ds)        rr = -rq - rs;
+  return { q: rq, r: rr };
+}
+
+function lonLatToHex(lon, lat, size) {
+  const q = (2/3 * lon) / size;
+  const r = (-1/3 * lon + Math.sqrt(3)/3 * lat) / size;
+  return hexRound(q, r);
+}
+
+function hexToLonLat(q, r, size) {
+  return {
+    lon: size * (3/2 * q),
+    lat: size * (Math.sqrt(3)/2 * q + Math.sqrt(3) * r)
+  };
+}
+
+function hexPolygon(centerLon, centerLat, size) {
+  const coords = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i;  // flat-top: 0°, 60°, 120°…
+    coords.push([centerLon + size * Math.cos(angle), centerLat + size * Math.sin(angle)]);
+  }
+  coords.push(coords[0]);  // close ring
+  return coords;
+}
+
+function computeHexbins(features) {
+  const cells = new Map();
+  for (const feat of features) {
+    const [lon, lat] = feat.geometry.coordinates;
+    const { q, r } = lonLatToHex(lon, lat, HEX_SIZE);
+    const key = `${q},${r}`;
+    if (!cells.has(key)) cells.set(key, { q, r, count: 0, types: {} });
+    const cell = cells.get(key);
+    cell.count++;
+    const tp = feat.properties.infraction_type || 'unknown';
+    cell.types[tp] = (cell.types[tp] || 0) + 1;
+  }
+
+  const hexFeatures = [];
+  for (const [, cell] of cells) {
+    const { lon, lat } = hexToLonLat(cell.q, cell.r, HEX_SIZE);
+    const topType = Object.entries(cell.types).sort((a,b) => b[1]-a[1])[0][0];
+    hexFeatures.push({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [hexPolygon(lon, lat, HEX_SIZE * 0.97)] },
+      properties: {
+        count:    cell.count,
+        height:   cell.count * HEX_HEIGHT_SCALE,
+        top_type: topType
+      }
+    });
+  }
+  return { type: 'FeatureCollection', features: hexFeatures };
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // STATE
 // ════════════════════════════════════════════════════════════════════════════
-let lang        = 'en';
-let allData     = null;
-let streetData  = null;
-let currentView = 'heat';
-let currentType = 'all';
-let typeList    = [];
+let lang          = 'en';
+let allData       = null;     // full GeoJSON from file
+let streetData    = null;
+let currentView   = 'heat';
+let currentType   = 'all';
+let typeList      = [];
+let months        = [];       // sorted array of 'YYYY-MM' strings
+let currentMonthIdx = -1;     // -1 = show all
+let playInterval  = null;
 
 const POINTS_URL  = 'data/infractions.geojson';
 const STREETS_URL = 'data/streets_matched.geojson';
 
-const TYPE_COLORS = [
-  '#E6194B','#3CB44B','#4363D8','#F58231','#911EB4',
-  '#42D4F4','#F032E6','#BFEF45','#FABED4','#469990',
-  '#DCBEFF','#9A6324','#800000','#AAFFC3','#808000',
-  '#FFD8B1','#000075','#A9A9A9','#FF6347','#40E0D0',
-  '#EE82EE','#7CFC00','#FF1493','#1E90FF','#FFD700'
-];
-
 // ════════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════════════════════
-function t(key)   { return T[lang][key] || key; }
+function t(key)    { return T[lang][key] || key; }
 function lbl(type) { return LABELS[lang][type] || type; }
+
+function getFilteredFeatures() {
+  if (!allData) return [];
+  return allData.features.filter(f => {
+    const typeOk = currentType === 'all' || f.properties.infraction_type === currentType;
+    const dateOk = currentMonthIdx === -1 ||
+      (f.properties.data_data || '').substring(0, 7) <= months[currentMonthIdx];
+    return typeOk && dateOk;
+  });
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // LANGUAGE
@@ -374,29 +460,24 @@ function lbl(type) { return LABELS[lang][type] || type; }
 function setLang(l) {
   lang = l;
   document.documentElement.lang = l;
-
-  document.querySelectorAll('.lang-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.textContent.trim().toLowerCase() === l);
-  });
-
-  // Re-render all static i18n nodes
+  document.querySelectorAll('.lang-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.textContent.trim().toLowerCase() === l)
+  );
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.dataset.i18n;
     if (typeof T[l][key] === 'string') el.textContent = T[l][key];
   });
-
-  // Rebuild dropdown labels
   const sel = document.getElementById('filter-type');
   Array.from(sel.options).forEach(opt => {
     opt.textContent = opt.value === 'all' ? T[l].filter_all : (LABELS[l][opt.value] || opt.value);
   });
-
   const streetBtn = document.getElementById('btn-streets');
   if (streetBtn.disabled) streetBtn.title = T[l].streets_soon;
+  updateTimelineLabel();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// MAP INIT
+// MAP
 // ════════════════════════════════════════════════════════════════════════════
 const map = new maplibregl.Map({
   container: 'map',
@@ -405,7 +486,6 @@ const map = new maplibregl.Map({
   zoom: 11,
   attributionControl: false
 });
-
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
@@ -419,13 +499,15 @@ map.on('load', async () => {
   if (ptRes.status === 'fulfilled') {
     allData = ptRes.value;
     initPointsLayers();
+    initHexLayer();
     populateFilters();
+    initTimeline();
     updateStats();
   }
 
   if (stRes.status === 'fulfilled') {
     streetData = stRes.value;
-    initStreetLayer();
+    initStreetLayers();
   } else {
     const btn = document.getElementById('btn-streets');
     btn.disabled = true;
@@ -435,41 +517,78 @@ map.on('load', async () => {
   setView('heat');
 });
 
-// ── Points layers ──────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// LAYER INIT
+// ════════════════════════════════════════════════════════════════════════════
 function initPointsLayers() {
-  map.addSource('points', { type: 'geojson', data: allData });
+  map.addSource('points', { type: 'geojson', data: { type: 'FeatureCollection', features: allData.features } });
 
+  // Heatmap — visible from zoom 5
   map.addLayer({
-    id: 'heatmap', type: 'heatmap', source: 'points', maxzoom: 16,
+    id: 'heatmap', type: 'heatmap', source: 'points',
     paint: {
       'heatmap-weight': 1,
-      'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 1, 15, 3],
+      'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 14, 3],
       'heatmap-color': [
         'interpolate', ['linear'], ['heatmap-density'],
         0, 'rgba(0,0,0,0)', 0.2, '#5A1846', 0.4, '#900C3F',
         0.6, '#C70039', 0.8, '#E3611C', 1, '#FFC300'
       ],
-      'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 8, 12, 14, 30],
+      'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 5, 6, 11, 18, 15, 35],
       'heatmap-opacity': 0.85
     }
   });
 
+  // Points — colored by infraction type, visible at ALL zoom levels
   map.addLayer({
-    id: 'points-circle', type: 'circle', source: 'points', minzoom: 13,
+    id: 'points-circle', type: 'circle', source: 'points',
     paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, 3, 17, 7],
+      // Scale radius smoothly from tiny at country zoom to readable at street zoom
+      'circle-radius': ['interpolate', ['linear'], ['zoom'],
+        5, 1.5,   // country level — tiny dot
+        9, 2.5,   // region level
+        12, 4,    // neighbourhood
+        15, 7,    // street level
+        18, 12    // very close
+      ],
       'circle-color': buildColorExpr(),
-      'circle-opacity': 0.8,
-      'circle-stroke-width': 0.5,
+      'circle-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 0.75, 14, 0.9],
+      'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 10, 0, 13, 0.5],
       'circle-stroke-color': '#000'
     }
   });
 }
 
-// ── Street layers ──────────────────────────────────────────────────────────
-function initStreetLayer() {
-  map.addSource('streets', { type: 'geojson', data: streetData });
+function initHexLayer() {
+  map.addSource('hexbins', {
+    type: 'geojson',
+    data: computeHexbins(allData.features)
+  });
 
+  map.addLayer({
+    id: 'hex-extrusion',
+    type: 'fill-extrusion',
+    source: 'hexbins',
+    paint: {
+      'fill-extrusion-color': [
+        'interpolate', ['linear'], ['get', 'count'],
+        1,   '#FFC300',
+        10,  '#FF8C00',
+        25,  '#FF4500',
+        60,  '#C70039',
+        120, '#5A1846'
+      ],
+      'fill-extrusion-height': ['get', 'height'],
+      'fill-extrusion-base': 0,
+      'fill-extrusion-opacity': 0.85
+    }
+  });
+
+  map.setLayoutProperty('hex-extrusion', 'visibility', 'none');
+}
+
+function initStreetLayers() {
+  map.addSource('streets', { type: 'geojson', data: streetData });
   map.addLayer({
     id: 'streets-line', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
@@ -479,15 +598,12 @@ function initStreetLayer() {
       'line-opacity': 0.9
     }
   });
-
-  // White highlight for clicked segment
   map.addLayer({
     id: 'streets-highlight', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
     paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.6 },
-    filter: ['==', ['id'], ''] // nothing highlighted initially
+    filter: ['==', ['id'], '']
   });
-
   map.setLayoutProperty('streets-line', 'visibility', 'none');
   map.setLayoutProperty('streets-highlight', 'visibility', 'none');
 }
@@ -505,18 +621,27 @@ function buildColorExpr() {
 // ════════════════════════════════════════════════════════════════════════════
 function setView(view) {
   currentView = view;
-  ['heat','streets','points'].forEach(v =>
+  ['heat','hex','streets','points'].forEach(v =>
+    document.getElementById(`btn-${v}`) &&
     document.getElementById(`btn-${v}`).classList.toggle('active', v === view)
   );
 
   const vis = (id, show) => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', show ? 'visible' : 'none'); };
   vis('heatmap',           view === 'heat');
   vis('points-circle',     view === 'heat' || view === 'points');
+  vis('hex-extrusion',     view === 'hex');
   vis('streets-line',      view === 'streets');
   vis('streets-highlight', view === 'streets');
 
   document.getElementById('legend').style.display = view === 'streets' ? 'block' : 'none';
   if (view !== 'streets') closePanel();
+
+  // Tilt into 3D when entering hex view, flatten when leaving
+  if (view === 'hex') {
+    map.easeTo({ pitch: 50, bearing: -15, duration: 600 });
+  } else if (map.getPitch() > 0) {
+    map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -531,47 +656,158 @@ function populateFilters() {
     opt.textContent = lbl(type);
     sel.appendChild(opt);
   });
-  sel.addEventListener('change', e => { currentType = e.target.value; applyFilter(); });
+  sel.addEventListener('change', e => { currentType = e.target.value; applyAllFilters(); });
 }
 
-function applyFilter() {
-  const f = currentType === 'all' ? null : ['==', ['get', 'infraction_type'], currentType];
-  ['heatmap','points-circle'].forEach(l => { if (map.getLayer(l)) map.setFilter(l, f); });
-  if (map.getLayer('streets-line'))
+function applyAllFilters() {
+  const filtered = getFilteredFeatures();
+  const fc = { type: 'FeatureCollection', features: filtered };
+
+  // Update point/heatmap source
+  if (map.getSource('points')) map.getSource('points').setData(fc);
+
+  // Recompute and update hexbins
+  if (map.getSource('hexbins')) map.getSource('hexbins').setData(computeHexbins(filtered));
+
+  // Street filter (type-only, timeline doesn't affect streets since they're pre-aggregated)
+  if (map.getLayer('streets-line')) {
     map.setFilter('streets-line', currentType === 'all' ? null : ['==', ['get', 'top_infraction'], currentType]);
-  updateStats();
+  }
+
+  updateStats(filtered.length);
 }
 
-function updateStats() {
+function updateStats(count) {
   if (!allData) return;
-  const shown = currentType === 'all'
-    ? allData.features
-    : allData.features.filter(f => f.properties.infraction_type === currentType);
-  document.getElementById('stat-total').textContent = shown.length.toLocaleString();
+  const n = count !== undefined ? count : getFilteredFeatures().length;
+  document.getElementById('stat-total').textContent = n.toLocaleString();
   document.getElementById('stat-types').textContent = typeList.length;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// HOVER TOOLTIP (points only)
+// TIMELINE
+// ════════════════════════════════════════════════════════════════════════════
+function initTimeline() {
+  // Build sorted unique months from data
+  const monthSet = new Set();
+  allData.features.forEach(f => {
+    const m = (f.properties.data_data || '').substring(0, 7);
+    if (m.length === 7) monthSet.add(m);
+  });
+  months = [...monthSet].sort();
+
+  const slider = document.getElementById('timeline-slider');
+  slider.max   = months.length - 1;
+  slider.value = months.length - 1;  // start at end (show all)
+  currentMonthIdx = months.length - 1;
+
+  // Year tick labels (show Jan of each year)
+  const labels = document.getElementById('timeline-labels');
+  const years  = [...new Set(months.map(m => m.substring(0, 4)))];
+  labels.innerHTML = years.map(y => `<span>${y}</span>`).join('');
+
+  updateTimelineLabel();
+  updateTimelineFill();
+
+  slider.addEventListener('input', () => {
+    currentMonthIdx = parseInt(slider.value);
+    updateTimelineLabel();
+    updateTimelineFill();
+    applyAllFilters();
+  });
+}
+
+function updateTimelineLabel() {
+  const el = document.getElementById('timeline-current');
+  if (!months.length) return;
+  const m = months[currentMonthIdx];
+  const [year, month] = m.split('-');
+  const monthNames = T[lang].month_names;
+  el.innerHTML = `<strong>${monthNames[parseInt(month)-1]} ${year}</strong>`;
+}
+
+function updateTimelineFill() {
+  const slider = document.getElementById('timeline-slider');
+  const fill   = document.getElementById('timeline-fill');
+  const pct    = (parseInt(slider.value) / parseInt(slider.max)) * 100;
+  fill.style.width = pct + '%';
+}
+
+function togglePlay() {
+  const btn    = document.getElementById('play-btn');
+  const slider = document.getElementById('timeline-slider');
+
+  if (playInterval) {
+    clearInterval(playInterval);
+    playInterval = null;
+    btn.textContent = '▶';
+    return;
+  }
+
+  // If already at end, restart from beginning
+  if (parseInt(slider.value) >= parseInt(slider.max)) {
+    slider.value = 0;
+    currentMonthIdx = 0;
+  }
+
+  btn.textContent = '⏸';
+  playInterval = setInterval(() => {
+    const next = parseInt(slider.value) + 1;
+    if (next > parseInt(slider.max)) {
+      clearInterval(playInterval);
+      playInterval = null;
+      btn.textContent = '▶';
+      return;
+    }
+    slider.value    = next;
+    currentMonthIdx = next;
+    updateTimelineLabel();
+    updateTimelineFill();
+    applyAllFilters();
+  }, 180);  // ~180ms per month step
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TOOLTIPS
 // ════════════════════════════════════════════════════════════════════════════
 const hoverTip = document.getElementById('hover-tip');
 
-map.on('mouseenter', 'points-circle', () => map.getCanvas().style.cursor = 'pointer');
-map.on('mouseleave', 'points-circle', () => { map.getCanvas().style.cursor = ''; hoverTip.style.display = 'none'; });
-map.on('mouseenter', 'streets-line',  () => map.getCanvas().style.cursor = 'pointer');
-map.on('mouseleave', 'streets-line',  () => map.getCanvas().style.cursor = '');
-
-map.on('mousemove', 'points-circle', e => {
-  const p = e.features[0].properties;
-  hoverTip.innerHTML = `
-    <div class="tip-type">${lbl(p.infraction_type)}</div>
-    <div class="tip-row">📅 ${(p.data_data || '').substring(0,10)} ${t('tip_at')} ${p.data_hora || '—'}</div>
-    <div class="tip-row">🚔 ${p.autoridade || '—'}</div>
-  `;
+function showTip(point, html) {
+  hoverTip.innerHTML = html;
   hoverTip.style.display = 'block';
-  hoverTip.style.left = (e.point.x + 14) + 'px';
-  hoverTip.style.top  = (e.point.y - 10) + 'px';
+  // Keep tooltip inside viewport
+  const x = Math.min(point.x + 14, window.innerWidth - 260);
+  hoverTip.style.left = x + 'px';
+  hoverTip.style.top  = (point.y - 10) + 'px';
+}
+function hideTip() { hoverTip.style.display = 'none'; }
+
+// Points
+map.on('mouseenter', 'points-circle', () => map.getCanvas().style.cursor = 'pointer');
+map.on('mouseleave', 'points-circle', () => { map.getCanvas().style.cursor = ''; hideTip(); });
+map.on('mousemove',  'points-circle', e => {
+  const p = e.features[0].properties;
+  showTip(e.point, `
+    <div class="tip-type">${lbl(p.infraction_type)}</div>
+    <div class="tip-row">📅 ${(p.data_data||'').substring(0,10)} ${t('tip_at')} ${p.data_hora||'—'}</div>
+    <div class="tip-row">🚔 ${p.autoridade||'—'}</div>
+  `);
 });
+
+// Hexbins
+map.on('mouseenter', 'hex-extrusion', () => map.getCanvas().style.cursor = 'pointer');
+map.on('mouseleave', 'hex-extrusion', () => { map.getCanvas().style.cursor = ''; hideTip(); });
+map.on('mousemove',  'hex-extrusion', e => {
+  const p = e.features[0].properties;
+  showTip(e.point, `
+    <div class="tip-type">${p.count} ${t('tip_hex_count')}</div>
+    <div class="tip-row">${t('tip_hex_top')} <b>${lbl(p.top_type)}</b></div>
+  `);
+});
+
+// Streets
+map.on('mouseenter', 'streets-line', () => map.getCanvas().style.cursor = 'pointer');
+map.on('mouseleave', 'streets-line', () => map.getCanvas().style.cursor = '');
 
 // ════════════════════════════════════════════════════════════════════════════
 // STREET PANEL (click → right drawer)
@@ -581,70 +817,49 @@ map.on('click', 'streets-line', e => {
   const p      = feat.properties;
   const lngLat = e.lngLat;
 
-  // Highlight the clicked segment
   if (map.getLayer('streets-highlight'))
     map.setFilter('streets-highlight', ['==', ['id'], feat.id ?? '']);
 
-  // Parse type breakdown (stored as JSON string by street_match.py)
   let breakdown = {};
   try { breakdown = JSON.parse(p.type_breakdown || '{}'); } catch (_) {}
-  const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
+  const sorted = Object.entries(breakdown).sort((a,b) => b[1]-a[1]);
   const max    = sorted.length ? sorted[0][1] : 1;
 
-  // Header
   document.getElementById('panel-street-name').textContent = p.street_name || t('panel_unnamed');
-  document.getElementById('panel-total').innerHTML = T[lang].panel_total(p.count);
-  document.getElementById('panel-meta').textContent =
+  document.getElementById('panel-total').innerHTML         = T[lang].panel_total(p.count);
+  document.getElementById('panel-meta').textContent        =
     (p.first_year && p.last_year)
-      ? `${t('panel_active')} ${T[lang].panel_years(p.first_year, p.last_year)}`
-      : '';
+      ? `${t('panel_active')} ${T[lang].panel_years(p.first_year, p.last_year)}` : '';
 
-  // Breakdown bars
   document.getElementById('breakdown-chart').innerHTML = sorted.map(([type, count]) => `
     <div class="breakdown-row">
-      <div class="breakdown-label">
-        <span>${lbl(type)}</span>
-        <span class="count">${count}</span>
-      </div>
-      <div class="breakdown-bar-bg">
-        <div class="breakdown-bar" style="width:${Math.round(100 * count / max)}%"></div>
-      </div>
+      <div class="breakdown-label"><span>${lbl(type)}</span><span class="count">${count}</span></div>
+      <div class="breakdown-bar-bg"><div class="breakdown-bar" style="width:${Math.round(100*count/max)}%"></div></div>
     </div>
   `).join('');
 
-  // Re-render i18n labels inside panel
   document.querySelectorAll('#street-panel [data-i18n]').forEach(el => {
     const key = el.dataset.i18n;
     if (typeof T[lang][key] === 'string') el.textContent = T[lang][key];
   });
 
-  // Google Street View — viewpoint at the exact click location
   document.getElementById('gsv-link').href =
     `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lngLat.lat},${lngLat.lng}`;
-
-  // OpenStreetMap — zoom 18 centred on click
   document.getElementById('osm-link').href =
     `https://www.openstreetmap.org/#map=18/${lngLat.lat.toFixed(6)}/${lngLat.lng.toFixed(6)}`;
 
   openPanel();
 });
 
-// Clicking empty space closes the panel and clears highlight
 map.on('click', e => {
-  const hits = map.queryRenderedFeatures(e.point, { layers: ['streets-line', 'points-circle'] });
-  if (!hits.length) {
-    closePanel();
-    hoverTip.style.display = 'none';
-    if (map.getLayer('streets-highlight'))
-      map.setFilter('streets-highlight', ['==', ['id'], '']);
-  }
+  const hits = map.queryRenderedFeatures(e.point, { layers: ['streets-line','points-circle','hex-extrusion'] });
+  if (!hits.length) { closePanel(); hideTip(); if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], '']); }
 });
 
 function openPanel()  { document.getElementById('street-panel').classList.add('open'); }
 function closePanel() {
   document.getElementById('street-panel').classList.remove('open');
-  if (map.getLayer('streets-highlight'))
-    map.setFilter('streets-highlight', ['==', ['id'], '']);
+  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], '']);
 }
 </script>
 </body>
