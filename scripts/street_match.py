@@ -255,13 +255,21 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: flo
         crs="EPSG:4326"
     ).to_crs(epsg)
 
-    # sjoin_nearest: for each point find the nearest edge within SNAP_THRESHOLD_M
+    # sjoin_nearest: for each point find the nearest edge within SNAP_THRESHOLD_M.
+    # When a point is equidistant from two edges (e.g. at an intersection),
+    # sjoin_nearest returns one row per match. We deduplicate by keeping only
+    # the closest edge per original point so each report is counted exactly once.
     joined = gpd.sjoin_nearest(
         pts,
         edges_proj[['geometry']],
         how='left',
         max_distance=SNAP_THRESHOLD_M,
         distance_col='snap_dist_m'
+    )
+
+    # Drop duplicate point rows — keep the nearest edge match only
+    joined = joined.sort_values('snap_dist_m').drop_duplicates(
+        subset=['lat', 'lon', 'infraction_type', 'year'], keep='first'
     )
 
     snapped = joined[joined['index_right'].notna()].copy()
