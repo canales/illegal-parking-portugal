@@ -49,6 +49,23 @@
     .toggle-btn.active   { background: #e63946; border-color: #e63946; color: white; }
     .toggle-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
+    /* ── Opacity slider ─────────────────────────────────────────────────── */
+    #opacity-wrap { display: none; align-items: center; gap: 7px; }
+    #opacity-wrap.visible { display: flex; }
+    #opacity-slider {
+      -webkit-appearance: none; width: 90px; height: 3px;
+      background: #333; border-radius: 2px; outline: none; cursor: pointer;
+    }
+    #opacity-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 13px; height: 13px;
+      border-radius: 50%; background: #e63946; cursor: pointer; border: 2px solid #fff;
+    }
+    #opacity-slider::-moz-range-thumb {
+      width: 13px; height: 13px; border-radius: 50%;
+      background: #e63946; cursor: pointer; border: 2px solid #fff;
+    }
+    #opacity-value { font-size: 0.7rem; color: #666; min-width: 28px; }
+
     /* ── Map area ───────────────────────────────────────────────────────── */
     #map-wrap { flex: 1; position: relative; overflow: hidden; }
     #map      { width: 100%; height: 100%; }
@@ -278,6 +295,12 @@
       <button class="toggle-btn"        id="btn-points"  onclick="setView('points')"  data-i18n="view_points">Points</button>
     </div>
   </label>
+  <label id="opacity-wrap">
+    <span data-i18n="opacity_label">Opacity:</span>
+    <input type="range" id="opacity-slider" min="0" max="100" value="85"
+           oninput="setLayerOpacity(this.value)" />
+    <span id="opacity-value">85%</span>
+  </label>
 </div>
 
 <!-- ── Map ───────────────────────────────────────────────────────────────── -->
@@ -393,6 +416,7 @@ const T = {
     timeline_all:    'All time',
     style_label:     'Basemap:',
     stats_title:     'Top infractions',
+    opacity_label:   'Opacity:',
     month_names:     ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   },
   pt: {
@@ -427,6 +451,7 @@ const T = {
     timeline_all:    'Todo o período',
     style_label:     'Mapa base:',
     stats_title:     'Principais infrações',
+    opacity_label:   'Opacidade:',
     month_names:     ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'],
   }
 };
@@ -837,6 +862,7 @@ function setView(view) {
 
   document.getElementById('legend').style.display = view === 'streets' ? 'block' : 'none';
   if (view !== 'streets') closePanel();
+  syncOpacitySlider(view);
 
   // Tilt into 3D when entering hex view, flatten when leaving
   if (view === 'hex') {
@@ -847,7 +873,41 @@ function setView(view) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// FILTERS
+// OPACITY SLIDER
+// ════════════════════════════════════════════════════════════════════════════
+function setLayerOpacity(value) {
+  const opacity = parseInt(value) / 100;
+  document.getElementById('opacity-value').textContent = value + '%';
+
+  if (currentView === 'heat') {
+    if (map.getLayer('heatmap'))
+      map.setPaintProperty('heatmap', 'heatmap-opacity', opacity);
+  } else if (currentView === 'hex') {
+    if (map.getLayer('hex-extrusion'))
+      map.setPaintProperty('hex-extrusion', 'fill-extrusion-opacity', opacity);
+  }
+}
+
+function syncOpacitySlider(view) {
+  const wrap   = document.getElementById('opacity-wrap');
+  const slider = document.getElementById('opacity-slider');
+  if (view === 'heat' || view === 'hex') {
+    wrap.classList.add('visible');
+    // Read the current opacity from the layer and sync the slider
+    let current = 0.85;
+    try {
+      current = view === 'heat'
+        ? map.getPaintProperty('heatmap', 'heatmap-opacity')
+        : map.getPaintProperty('hex-extrusion', 'fill-extrusion-opacity');
+    } catch (_) {}
+    if (typeof current === 'number') {
+      slider.value = Math.round(current * 100);
+      document.getElementById('opacity-value').textContent = slider.value + '%';
+    }
+  } else {
+    wrap.classList.remove('visible');
+  }
+}
 // ════════════════════════════════════════════════════════════════════════════
 function populateFilters() {
   typeList = [...new Set(allData.features.map(f => f.properties.infraction_type))].sort();
