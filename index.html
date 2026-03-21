@@ -679,18 +679,19 @@ function setMapStyle(styleKey) {
   document.getElementById('timeline-bar').style.borderTopColor =
     isLight ? '#ccc' : '#2a2a3a';
 
-  // Swap the basemap. After setStyle(), MapLibre clears all custom layers.
-  // style.load fires when the JSON is parsed but some styles (esp. OFM)
-  // aren't fully ready to accept addSource/addLayer at that exact moment.
-  // We poll map.isStyleLoaded() until it returns true, then re-add layers.
+  // Swap the basemap. After setStyle(), MapLibre destroys all custom
+  // layers/sources. We must re-add them once the new style is ready.
+  //
+  // CRITICAL: register the listener BEFORE calling setStyle(). The old code
+  // called setStyle() first, then map.once('style.load', ...) — but if the
+  // event fires synchronously (or before the next microtask), the listener
+  // misses it entirely and initAllLayers() never runs. That's why only the
+  // initial dark-matter style (loaded via map.on('load')) ever showed data.
+  //
+  // We use the public 'load' event, which MapLibre re-emits after a full
+  // setStyle() replacement once tiles, sprites, and glyphs are all ready.
+  map.once('load', () => initAllLayers());
   map.setStyle(MAP_STYLES[styleKey]);
-  map.once('style.load', function waitForReady() {
-    if (!map.isStyleLoaded()) {
-      setTimeout(waitForReady, 50);
-      return;
-    }
-    initAllLayers();
-  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
