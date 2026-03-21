@@ -1315,8 +1315,8 @@ function buildMunicipalityStats() {
 }
 
 // Compute total road length (km) per municipality from streetData geometries.
-// Each segment's midpoint is matched to the nearest infraction point's
-// municipio tag — fast approximation within 0.05°.
+// Reads the `municipio` property tagged by street_match.py — no proximity
+// guessing needed, so values are accurate.
 function computeRoadLengthPerMunicipality() {
   if (!streetData) return {};
   const lengths = {};
@@ -1331,19 +1331,10 @@ function computeRoadLengthPerMunicipality() {
   }
 
   streetData.features.forEach(f => {
+    const muni = f.properties.municipio;
+    if (!muni) return;
     const coords = f.geometry.coordinates;
     if (!coords || coords.length < 2) return;
-    const mid = coords[Math.floor(coords.length / 2)];
-    const [mlon, mlat] = mid;
-
-    const nearby = allData.features.find(pt => {
-      const [plon, plat] = pt.geometry.coordinates;
-      return getMuni(pt) &&
-             Math.abs(plon - mlon) < 0.05 && Math.abs(plat - mlat) < 0.05;
-    });
-    if (!nearby) return;
-    const muni = getMuni(nearby);
-
     let segLen = 0;
     for (let i = 0; i < coords.length - 1; i++) {
       segLen += haversine(coords[i], coords[i+1]);
@@ -1408,10 +1399,7 @@ function renderRankings() {
 
   const maxVal = rows.length ? rows[0].value : 1;
 
-  // Show up to 15 rows (list is scrollable for the rest)
-  const display = rows.slice(0, Math.min(rows.length, 15));
-
-  document.getElementById('rankings-list').innerHTML = display.map((r, i) => {
+  document.getElementById('rankings-list').innerHTML = rows.map((r, i) => {
     const barPct = Math.round(100 * r.value / maxVal);
     const valStr = rankMode === 'perkm'
       ? r.value.toFixed(2)
