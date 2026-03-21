@@ -257,8 +257,10 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: flo
 
     # sjoin_nearest: for each point find the nearest edge within SNAP_THRESHOLD_M.
     # When a point is equidistant from two edges (e.g. at an intersection),
-    # sjoin_nearest returns one row per match. We deduplicate by keeping only
-    # the closest edge per original point so each report is counted exactly once.
+    # sjoin_nearest returns one row per match. We deduplicate on the original
+    # point index (not on attribute values) so each report counts exactly once
+    # while legitimate duplicate-coordinate reports are preserved.
+    pts = pts.reset_index(drop=True)   # ensure clean 0-based index
     joined = gpd.sjoin_nearest(
         pts,
         edges_proj[['geometry']],
@@ -267,10 +269,10 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: flo
         distance_col='snap_dist_m'
     )
 
-    # Drop duplicate point rows — keep the nearest edge match only
-    joined = joined.sort_values('snap_dist_m').drop_duplicates(
-        subset=['lat', 'lon', 'infraction_type', 'year'], keep='first'
-    )
+    # Keep only the single closest edge per original point row
+    joined = joined.sort_values('snap_dist_m').loc[
+        ~joined.index.duplicated(keep='first')
+    ]
 
     snapped = joined[joined['index_right'].notna()].copy()
     snapped['edge_idx'] = snapped['index_right'].astype(int)
