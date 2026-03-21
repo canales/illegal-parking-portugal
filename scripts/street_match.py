@@ -63,9 +63,9 @@ PT_LON_MIN, PT_LON_MAX = -32.0, -6.0
 
 # ── Snap config ────────────────────────────────────────────────────────────
 SNAP_THRESHOLD_M   = 50
-FETCH_TIMEOUT_SECS = 180
-DELAY_BETWEEN_SECS = 12
-MAX_RETRIES        = 3
+FETCH_TIMEOUT_SECS = 60    # fail fast — 60s is plenty for a 0.1° cell
+DELAY_BETWEEN_SECS = 15    # polite pause between requests
+MAX_RETRIES        = 2     # one retry is enough; 3 retries × 60s = 3min wasted per cell
 
 # ── osmnx 2.x settings ────────────────────────────────────────────────────
 ox.settings.log_console       = False
