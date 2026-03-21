@@ -1199,35 +1199,41 @@ function closePointPopup() {
 // VIEWPORT-REACTIVE STATS PANEL
 // ════════════════════════════════════════════════════════════════════════════
 function updateViewportStats() {
-  // Streets view — aggregate type_breakdown from visible street segments
-  if (currentView === 'streets' && map.getLayer('streets-line')) {
-    const rendered = map.queryRenderedFeatures({ layers: ['streets-line'] });
-    if (rendered.length > 0) {
-      // Merge breakdown objects from all visible street segments
-      const merged = {};
-      const seen = new Set();
-      rendered.forEach(f => {
-        // De-duplicate by feature id
-        const key = f.id ?? f.properties.street_name ?? JSON.stringify(f.geometry.coordinates[0]);
-        if (seen.has(key)) return;
-        seen.add(key);
-        try {
-          const bd = JSON.parse(f.properties.type_breakdown || '{}');
-          Object.entries(bd).forEach(([type, count]) => {
-            merged[type] = (merged[type] || 0) + count;
-          });
-        } catch (_) {}
-      });
-      // Convert to feature-like objects that updateStatsPanel can consume
-      const fakeFeatures = Object.entries(merged).map(([type, count]) => ({
-        properties: { infraction_type: type, _count: count }
-      }));
-      updateStatsPanel(fakeFeatures, merged);
+  const bounds = map.getBounds();
+
+  // Helper: check if a GeoJSON point coordinate is within current map bounds
+  const inBounds = (lon, lat) =>
+    lat >= bounds.getSouth() && lat <= bounds.getNorth() &&
+    lon >= bounds.getWest()  && lon <= bounds.getEast();
+
+  // Streets view — filter streetData by bounds, merge type_breakdowns
+  if (currentView === 'streets' && streetData) {
+    const merged = {};
+    streetData.features.forEach(f => {
+      // Use centroid of first coordinate of the line as the location check
+      const coords = f.geometry.coordinates;
+      const mid = coords[Math.floor(coords.length / 2)];
+      if (!mid || !inBounds(mid[0], mid[1])) return;
+      try {
+        const bd = JSON.parse(f.properties.type_breakdown || '{}');
+        Object.entries(bd).forEach(([type, count]) => {
+          merged[type] = (merged[type] || 0) + count;
+        });
+      } catch (_) {}
+    });
+    const total = Object.values(merged).reduce((a, b) => a + b, 0);
+    if (total > 0) {
+      updateStatsPanel([], merged);
       return;
     }
+    // No streets in view — fall through to full dataset
+    updateStatsPanel(getFilteredFeatures());
+    return;
   }
 
-  // Heatmap / points view — query points-circle layer
+  // Heatmap / points / hex view — filter source data array by bounds.
+  // Bounds-based filtering is always exact; queryRenderedFeatures has a
+  // tile rendering cap that makes counts wrong at any zoom level.
   if (!map.getLayer('points-circle')) return;
   const vis = map.getLayoutProperty('points-circle', 'visibility');
   if (vis === 'none') {
@@ -1235,31 +1241,12 @@ function updateViewportStats() {
     return;
   }
 
-  // If zoomed out to country level, queryRenderedFeatures only returns a
-  // subset of points due to MapLibre's tile rendering limits. Detect this
-  // by checking zoom level — below 9 (city level) the viewport covers a
-  // large enough area that using the full filtered dataset is more accurate
-  // than counting only rendered tiles.
-  const zoom = map.getZoom();
-  if (zoom < 9) {
-    updateStatsPanel(getFilteredFeatures());
-    return;
-  }
-
-  const rendered = map.queryRenderedFeatures({ layers: ['points-circle'] });
-  if (rendered.length === 0) {
-    updateStatsPanel(getFilteredFeatures());
-    return;
-  }
-
-  const seen = new Set();
-  const unique = rendered.filter(f => {
-    const key = `${f.properties.data_data}_${f.geometry.coordinates}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  const filtered = getFilteredFeatures().filter(f => {
+    const [lon, lat] = f.geometry.coordinates;
+    return inBounds(lon, lat);
   });
-  updateStatsPanel(unique);
+
+  updateStatsPanel(filtered.length > 0 ? filtered : getFilteredFeatures());
 }
 
 // Hook into map movement — update stats whenever the user pans or zooms
