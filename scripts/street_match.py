@@ -8,12 +8,14 @@ Strategy:
   - Uses osmnx to fetch road networks from OSM via the Overpass API.
   - Runs one small district at a time to stay within Overpass limits.
   - Each district has a hard timeout — if it hangs, it's skipped cleanly.
+  - Includes retry with backoff for transient Overpass errors (429/503).
+  - Delays between districts to avoid rate-limiting.
   - Results from all districts are merged into one output GeoJSON.
 
-Runtime: ~8–15 min on GitHub Actions.
+Runtime: ~10–20 min on GitHub Actions.
 
 Usage:
-    pip install osmnx geopandas scipy shapely numpy pandas
+    pip install osmnx==2.0.1 geopandas scipy shapely numpy pandas
     python scripts/street_match.py
 
     # Single district for quick local testing:
@@ -22,6 +24,7 @@ Usage:
 
 import os
 import json
+import time
 import argparse
 import signal
 from collections import Counter
@@ -39,10 +42,11 @@ OUT_PATH = os.path.join(ROOT, 'data', 'streets_matched.geojson')
 
 # ── Districts ──────────────────────────────────────────────────────────────
 # Deliberately small bboxes — Overpass chokes on large areas.
-# Each bbox: (lat_min, lon_min, lat_max, lon_max)
-# Rule of thumb: keep each box under ~0.15° × 0.15° (~15km × 15km)
+# Each bbox: (lat_min, lon_min, lat_max, lon_max)  ← storage format
+# Converted to osmnx 2.x order (west, south, east, north) at call time.
+# Rule of thumb: keep each box under ~0.15° × 0.15° (~15 km × 15 km)
 DISTRICTS = {
-    # Lisbon split into 4 quadrants
+    # Lisbon split into quadrants + suburbs
     'lisbon_center':  (38.70, -9.20, 38.80, -9.10),
     'lisbon_west':    (38.70, -9.30, 38.80, -9.20),
     'lisbon_north':   (38.80, -9.20, 38.90, -9.10),
@@ -50,7 +54,7 @@ DISTRICTS = {
     'lisbon_sintra':  (38.76, -9.45, 38.86, -9.30),
     'lisbon_amadora': (38.73, -9.28, 38.80, -9.18),
     'lisbon_setubal': (38.50, -8.95, 38.62, -8.83),
-    # Porto metro split into 3
+    # Porto metro
     'porto_center':   (41.13, -8.65, 41.22, -8.55),
     'porto_south':    (41.08, -8.65, 41.15, -8.55),
     'matosinhos':     (41.17, -8.74, 41.24, -8.64),
@@ -62,21 +66,30 @@ DISTRICTS = {
 }
 
 SNAP_THRESHOLD_M   = 50
-FETCH_TIMEOUT_SECS = 300  # 5 min per district — if it takes longer, skip it
+FETCH_TIMEOUT_SECS = 300   # hard wall-clock timeout per district
+DELAY_BETWEEN_SECS = 12    # polite pause between Overpass requests
+MAX_RETRIES        = 3     # retry transient failures with backoff
 
-# osmnx settings — conservative to avoid throttling
-ox.settings.log_console             = False
-ox.settings.use_cache               = False  # no cache on Actions (ephemeral runner)
-ox.settings.timeout                 = 90     # Overpass HTTP timeout per request
-ox.settings.max_query_area_size     = 50_000_000  # 50 km² max per sub-query
+# ── osmnx 2.x settings ────────────────────────────────────────────────────
+ox.settings.log_console       = False
+ox.settings.use_cache         = False      # ephemeral CI runner — no cache
+ox.settings.requests_timeout  = 120        # client HTTP timeout + server [timeout:N] (osmnx 2.x name)
+ox.settings.overpass_memory   = 536870912  # 512 MB — server [maxsize:N], fills {maxsize} in template
+# max_query_area_size intentionally left at default (2,500,000,000 m²).
+# Our bboxes are ~96 km² each — well under the threshold.
+# The old override (50_000_000) was SMALLER than our bboxes, forcing osmnx
+# to subdivide every district into hundreds of thousands of sub-queries.
+
+# Identify ourselves so Overpass admins can reach us if needed.
+ox.settings.http_user_agent = 'street_match.py/1.0 (GitHub Actions; parking infraction project)'
 
 
 # ── Timeout helper (Unix only — works on GitHub Actions Linux) ─────────────
-class TimeoutError(Exception):
+class _Timeout(Exception):
     pass
 
 def _timeout_handler(signum, frame):
-    raise TimeoutError()
+    raise _Timeout()
 
 
 # ── Data loading ───────────────────────────────────────────────────────────
@@ -105,38 +118,65 @@ def filter_to_bbox(df, bbox):
     ].copy()
 
 
-# ── OSM network fetch (with hard timeout) ─────────────────────────────────
+# ── OSM network fetch (with retry + hard timeout) ─────────────────────────
 def fetch_network(name, bbox):
+    """Fetch the driveable road network for a bbox, with retry and timeout."""
     lat_min, lon_min, lat_max, lon_max = bbox
-    print(f"  Fetching OSM network...", end=' ', flush=True)
 
-    # Set alarm (Linux/Mac only — silently skipped on Windows)
-    try:
-        signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(FETCH_TIMEOUT_SECS)
-    except AttributeError:
-        pass  # Windows doesn't have SIGALRM
+    # osmnx 2.x bbox order: (west, south, east, north) = (lon_min, lat_min, lon_max, lat_max)
+    ox_bbox = (lon_min, lat_min, lon_max, lat_max)
 
-    try:
-        G = ox.graph_from_bbox(
-            bbox=(lat_max, lat_min, lon_max, lon_min),
-            network_type='drive',
-            simplify=True
-        )
-        edges = ox.graph_to_gdfs(G, nodes=False)
-        print(f"{len(edges)} edges.")
-        return edges
-    except TimeoutError:
-        print(f"TIMED OUT after {FETCH_TIMEOUT_SECS}s — skipping.")
-        return None
-    except Exception as e:
-        print(f"FAILED ({type(e).__name__}: {e}) — skipping.")
-        return None
-    finally:
+    for attempt in range(1, MAX_RETRIES + 1):
+        print(f"  Fetching OSM network (attempt {attempt}/{MAX_RETRIES})...", end=' ', flush=True)
+
+        # Set hard wall-clock alarm (Linux/Mac only)
         try:
-            signal.alarm(0)
+            signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(FETCH_TIMEOUT_SECS)
         except AttributeError:
-            pass
+            pass  # Windows — no SIGALRM
+
+        try:
+            G = ox.graph_from_bbox(
+                bbox=ox_bbox,
+                network_type='drive',
+                simplify=True
+            )
+            edges = ox.graph_to_gdfs(G, nodes=False)
+            print(f"{len(edges)} edges.")
+            return edges
+
+        except _Timeout:
+            print(f"TIMED OUT after {FETCH_TIMEOUT_SECS}s.")
+
+        except Exception as e:
+            err_str = str(e).lower()
+            print(f"FAILED ({type(e).__name__}: {e})")
+
+            # Retry on transient Overpass / HTTP errors
+            is_transient = any(tok in err_str for tok in [
+                '429', '503', '504', 'timeout', 'timed out',
+                'too many requests', 'server load', 'overpass',
+                'connection', 'read timed out',
+            ])
+            if not is_transient:
+                print("  Non-transient error — skipping district.")
+                return None
+
+        finally:
+            try:
+                signal.alarm(0)
+            except AttributeError:
+                pass
+
+        # Exponential backoff before retry
+        if attempt < MAX_RETRIES:
+            wait = DELAY_BETWEEN_SECS * (2 ** (attempt - 1))
+            print(f"  Waiting {wait}s before retry...")
+            time.sleep(wait)
+
+    print(f"  All {MAX_RETRIES} attempts failed — skipping district.")
+    return None
 
 
 # ── Snap & aggregate ───────────────────────────────────────────────────────
@@ -149,7 +189,11 @@ def snap_and_aggregate(df_pts, edges):
     coords = np.array([(g.x, g.y) for g in mids])
     tree   = cKDTree(coords)
 
-    pts      = gpd.GeoDataFrame(df_pts, geometry=gpd.points_from_xy(df_pts.lon, df_pts.lat), crs="EPSG:4326")
+    pts      = gpd.GeoDataFrame(
+        df_pts,
+        geometry=gpd.points_from_xy(df_pts.lon, df_pts.lat),
+        crs="EPSG:4326"
+    )
     pts_proj = pts.to_crs("EPSG:3763")
     pt_xy    = np.array([(g.x, g.y) for g in pts_proj.geometry])
 
@@ -216,9 +260,10 @@ def main():
 
     all_features = []
     succeeded, skipped = 0, 0
+    district_list = list(districts.items())
 
-    for name, bbox in districts.items():
-        print(f"\n── {name.upper()} ──")
+    for i, (name, bbox) in enumerate(district_list):
+        print(f"\n── {name.upper()} ({i+1}/{len(district_list)}) ──")
         df_district = filter_to_bbox(df_all, bbox)
         print(f"  {len(df_district)} points in bbox.")
 
@@ -238,8 +283,16 @@ def main():
         print(f"  → {len(features)} segments with infractions.")
         succeeded += 1
 
+        # Polite delay between districts to avoid Overpass rate-limiting
+        if i < len(district_list) - 1:
+            print(f"  Pausing {DELAY_BETWEEN_SECS}s before next district...")
+            time.sleep(DELAY_BETWEEN_SECS)
+
     print(f"\n── DONE: {succeeded} districts succeeded, {skipped} skipped ──")
     print(f"   {len(all_features)} total street segments.")
+
+    if succeeded == 0:
+        print("⚠  No districts succeeded — writing empty collection.")
 
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     with open(OUT_PATH, 'w', encoding='utf-8') as f:
