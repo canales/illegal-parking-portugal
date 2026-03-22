@@ -184,12 +184,23 @@ def main():
     # 3. Spatial join — assign municipio to ALL records every run
     features = assign_municipios(features)
 
-    # 4. Save
+    # 4. Save infractions
     os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
     with open(SAVE_PATH, 'w', encoding='utf-8') as f:
         json.dump({"type": "FeatureCollection", "features": features}, f,
                   ensure_ascii=False)
     print(f"Saved {len(features)} total records → {SAVE_PATH}")
+
+    # 5. Save stats.json — picked up by the map to show the update badge
+    stats_path = os.path.join(ROOT, 'data', 'stats.json')
+    stats = {
+        "new_count":    new_count,
+        "total":        len(features),
+        "updated_date": datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    }
+    with open(stats_path, 'w', encoding='utf-8') as f:
+        json.dump(stats, f)
+    print(f"Saved stats → {stats_path}")
 
 
 if __name__ == "__main__":
