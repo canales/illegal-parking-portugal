@@ -1095,13 +1095,10 @@ function applyAllFilters() {
     map.setFilter('streets-line', currentType === 'all' ? null : ['==', ['get', 'top_infraction'], currentType]);
 
   updateFilterCounts(filtered);
+  // Stats panel: use viewport if points are visible, else full filtered set
+  // Defer slightly so MapLibre has time to update rendered features after setData
   setTimeout(updateViewportStats, 100);
   updateStats(filtered.length);
-  // Keep city rankings in sync with timeline and type filter
-  if (muniStats !== null) {
-    muniStats = buildMunicipalityStats(filtered);
-    renderRankings();
-  }
 }
 
 function updateStats(count) {
@@ -1316,10 +1313,9 @@ function getMuni(f) {
   return null;
 }
 
-function buildMunicipalityStats(features) {
-  const src = features || allData.features;
+function buildMunicipalityStats() {
   const stats = {};
-  src.forEach(f => {
+  allData.features.forEach(f => {
     const muni = getMuni(f);
     if (!muni) return;
     const type = f.properties.infraction_type;
