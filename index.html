@@ -1142,7 +1142,7 @@ function setView(view) {
     hideMunicioBoundary();
     // Clear street ranking highlights when leaving streets view
     if (map.getLayer('streets-ranked'))
-      map.setFilter('streets-ranked', ['in', 'street_name', '']);
+      map.setFilter('streets-ranked', ['==', ['id'], -1]);
   }
   syncOpacitySlider(view);
 
@@ -1866,11 +1866,13 @@ function clusterStreets(segments) {
       clusterMap[root] = {
         name: seg.name, municipio: seg.municipio,
         count: 0, bbox: [Infinity, Infinity, -Infinity, -Infinity],
-        typeBreakdown: {}
+        typeBreakdown: {},
+        featureIds: []   // MapLibre feature IDs of segments in this cluster
       };
     }
     const c = clusterMap[root];
     c.count += seg.count;
+    c.featureIds.push(seg.featureIdx);  // track which features belong here
     // Expand bounding box
     const coords = seg.coords;
     coords.forEach(([lon, lat]) => {
@@ -1917,7 +1919,8 @@ function initStreetRankings() {
   // Skip unnamed streets (name is null/empty) — they can't meaningfully rank
   const segments = streetData.features
     .filter(f => f.properties.street_name && f.properties.municipio)
-    .map(f => ({
+    .map((f, i) => ({
+      featureIdx:    i,   // index in streetData.features — used for ID-based map filter
       name:          f.properties.street_name,
       municipio:     f.properties.municipio,
       count:         f.properties.count || 0,
@@ -1979,25 +1982,15 @@ function renderStreetRankings() {
     .sort((a, b) => b.filteredCount - a.filteredCount)
     .slice(0, STREETS_MAX_RANK);
 
-  // Feature 1: highlight ranked streets in green on the map
-  // Filter by BOTH street_name AND municipio to avoid matching same-named
-  // streets in other municipalities across Portugal
+  // Feature 1: highlight ranked streets using exact feature IDs from clusters
+  // This correctly highlights only the segments in each ranked cluster,
+  // not all segments sharing the same name across the municipality.
   if (map.getLayer('streets-ranked')) {
-    if (rows.length > 0 && muni) {
-      const names = rows.map(r => r.name);
-      map.setFilter('streets-ranked', ['all',
-        ['==', ['get', 'municipio'], muni],
-        ['in', ['get', 'street_name'], ['literal', names]]
-      ]);
-    } else if (rows.length > 0 && national) {
-      // National view: match name+municipio pairs using combined key
-      const pairs = rows.map(r => `${r.municipio}|||${r.name}`);
-      map.setFilter('streets-ranked', ['in',
-        ['concat', ['get', 'municipio'], ['literal', '|||'], ['get', 'street_name']],
-        ['literal', pairs]
-      ]);
+    if (rows.length > 0) {
+      const ids = rows.flatMap(r => r.featureIds || []);
+      map.setFilter('streets-ranked', ['in', ['id'], ['literal', ids]]);
     } else {
-      map.setFilter('streets-ranked', ['==', ['get', 'street_name'], '']);
+      map.setFilter('streets-ranked', ['==', ['id'], -1]);
     }
   }
 
@@ -2091,13 +2084,9 @@ function openPanelFromCluster(cl, bbox) {
   document.getElementById('osm-link').href =
     `https://www.openstreetmap.org/#map=18/${lat.toFixed(6)}/${lon.toFixed(6)}`;
 
-  // Highlight all segments matching this street name AND municipality
-  // (name alone would match same-named streets in other municipalities)
+  // Highlight exactly the segments in this cluster using their feature IDs
   if (map.getLayer('streets-highlight'))
-    map.setFilter('streets-highlight', ['all',
-      ['==', ['get', 'street_name'], cl.name],
-      ['==', ['get', 'municipio'], cl.municipio]
-    ]);
+    map.setFilter('streets-highlight', ['in', ['id'], ['literal', cl.featureIds || []]]);
 
   openPanel();
 }
