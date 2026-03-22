@@ -881,7 +881,7 @@ function initAllLayers() {
 // ── Style switcher ─────────────────────────────────────────────────────────
 // IDs of our custom sources and layers — everything that isn't part of the basemap.
 const _CUSTOM_SOURCES = ['points', 'hexbins', 'streets'];
-const _CUSTOM_LAYERS  = ['heatmap', 'points-circle', 'hex-extrusion', 'streets-line', 'streets-highlight'];
+const _CUSTOM_LAYERS  = ['heatmap', 'points-circle', 'hex-extrusion', 'streets-line', 'streets-ranked', 'streets-highlight'];
 
 function setMapStyle(styleKey) {
   currentStyle = styleKey;
@@ -1012,6 +1012,27 @@ function initStreetLayers() {
       'line-opacity': 0.9
     }
   });
+  // Ranked streets highlight — drawn on top in panel green, filtered dynamically
+  map.addLayer({
+    id: 'streets-ranked', type: 'line', source: 'streets',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: {
+      'line-color': '#2dd4a0',
+      'line-width': ['interpolate', ['linear'], ['get', 'count'], 1, 2.5, 10, 4, 50, 6, 200, 10],
+      'line-opacity': 1
+    },
+    filter: ['in', 'street_name', '']   // empty by default — nothing highlighted
+  });
+  map.addLayer({
+    id: 'streets-highlight', type: 'line', source: 'streets',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.6 },
+    filter: ['==', ['id'], '']
+  });
+  map.setLayoutProperty('streets-line',      'visibility', 'none');
+  map.setLayoutProperty('streets-ranked',    'visibility', 'none');
+  map.setLayoutProperty('streets-highlight', 'visibility', 'none');
+}
   map.addLayer({
     id: 'streets-highlight', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
@@ -1045,10 +1066,16 @@ function setView(view) {
   vis('points-circle',     view === 'heat' || view === 'points');
   vis('hex-extrusion',     view === 'hex');
   vis('streets-line',      view === 'streets');
+  vis('streets-ranked',    view === 'streets');
   vis('streets-highlight', view === 'streets');
 
   document.getElementById('legend').style.display = view === 'streets' ? 'block' : 'none';
-  if (view !== 'streets') closePanel();
+  if (view !== 'streets') {
+    closePanel();
+    // Clear street ranking highlights when leaving streets view
+    if (map.getLayer('streets-ranked'))
+      map.setFilter('streets-ranked', ['in', 'street_name', '']);
+  }
   syncOpacitySlider(view);
 
   // Tilt into 3D when entering hex view, flatten when leaving
@@ -1825,15 +1852,14 @@ function renderStreetRankings() {
   const muni       = document.getElementById('streets-muni-filter').value;
   const typeFilter = document.getElementById('streets-type-filter').value;
   const listEl     = document.getElementById('streets-list');
+  const national   = !muni;   // no municipality selected = national view
 
-  if (!muni) {
-    listEl.innerHTML = `<div style="font-size:0.72rem;color:#555;padding:6px 0">${t('streets_no_data')}</div>`;
-    return;
-  }
+  // Feature 1: auto-switch to street view
+  if (currentView !== 'streets') setView('streets');
 
-  // Filter to selected municipality and type, score by count
+  // Filter clusters
   let rows = streetClusters
-    .filter(c => c.municipio === muni)
+    .filter(c => national || c.municipio === muni)
     .map(c => {
       const count = typeFilter === 'all'
         ? c.count
@@ -1844,19 +1870,53 @@ function renderStreetRankings() {
     .sort((a, b) => b.filteredCount - a.filteredCount)
     .slice(0, STREETS_MAX_RANK);
 
+  // Feature 1: highlight ranked streets in green on the map
+  if (map.getLayer('streets-ranked')) {
+    if (rows.length > 0) {
+      const names = rows.map(r => r.name);
+      // MapLibre 'in' filter: ['in', field, val1, val2, ...]
+      map.setFilter('streets-ranked', ['in', ['get', 'street_name'], ['literal', names]]);
+    } else {
+      map.setFilter('streets-ranked', ['in', 'street_name', '']);
+    }
+  }
+
+  // Feature 2: pan to city bounding box when municipality selected
+  if (muni) {
+    const muniClusters = streetClusters.filter(c => c.municipio === muni);
+    if (muniClusters.length > 0) {
+      const bbox = muniClusters.reduce((acc, c) => [
+        Math.min(acc[0], c.bbox[0]), Math.min(acc[1], c.bbox[1]),
+        Math.max(acc[2], c.bbox[2]), Math.max(acc[3], c.bbox[3])
+      ], [Infinity, Infinity, -Infinity, -Infinity]);
+      map.fitBounds(
+        [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
+        { padding: 60, duration: 800 }
+      );
+    }
+  }
+
   if (!rows.length) {
-    listEl.innerHTML = `<div style="font-size:0.72rem;color:#555;padding:6px 0">No data for this selection</div>`;
+    listEl.innerHTML = `<div style="font-size:0.72rem;color:#555;padding:6px 0">${national ? t('streets_no_data') : 'No data for this selection'}</div>`;
     return;
   }
 
   const maxVal = rows[0].filteredCount;
   listEl.innerHTML = rows.map((r, i) => {
-    const barPct = Math.round(100 * r.filteredCount / maxVal);
+    const barPct   = Math.round(100 * r.filteredCount / maxVal);
+    // Feature 4: in national view, append municipality name to disambiguate
+    const label    = national ? `${r.displayName} · ${r.municipio}` : r.displayName;
+    const bboxJson = JSON.stringify(r.bbox);
+    const clJson   = JSON.stringify({
+      name: r.displayName, municipio: r.municipio,
+      count: r.filteredCount, typeBreakdown: r.typeBreakdown,
+      first_year: r.first_year || null, last_year: r.last_year || null
+    }).replace(/"/g, '&quot;');
     return `
-      <div class="street-row" onclick="flyToStreet(${JSON.stringify(r.bbox)})">
+      <div class="street-row" onclick="flyToStreet(${bboxJson}, ${clJson.replace(/'/g, '&#39;')})">
         <div class="street-num">${i + 1}</div>
         <div class="street-bar-wrap">
-          <div class="street-name" title="${r.displayName}">${r.displayName}</div>
+          <div class="street-name" title="${label}">${label}</div>
           <div class="street-meta">
             <div class="street-bar-bg"><div class="street-bar" style="width:${barPct}%"></div></div>
             <div class="street-val">${r.filteredCount.toLocaleString()}</div>
@@ -1866,15 +1926,56 @@ function renderStreetRankings() {
   }).join('');
 }
 
-// Fly map to a street's bounding box on click
-function flyToStreet(bbox) {
-  // bbox = [minLon, minLat, maxLon, maxLat]
-  // Add small padding so the street isn't flush against the viewport edge
+// Fly to street bbox and open the right-side detail panel
+function flyToStreet(bbox, clusterData) {
   const pad = 0.002;
   map.fitBounds(
     [[bbox[0] - pad, bbox[1] - pad], [bbox[2] + pad, bbox[3] + pad]],
     { padding: 60, maxZoom: 17, duration: 800 }
   );
+
+  // Feature 3: open the street detail panel with aggregated cluster data
+  if (clusterData) openPanelFromCluster(clusterData, bbox);
+}
+
+// Open the right-side street panel from a ranking cluster (no map click needed)
+function openPanelFromCluster(cl, bbox) {
+  const breakdown = typeof cl.typeBreakdown === 'string'
+    ? JSON.parse(cl.typeBreakdown) : cl.typeBreakdown;
+  const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
+  const max    = sorted.length ? sorted[0][1] : 1;
+
+  document.getElementById('panel-street-name').textContent = cl.name;
+  document.getElementById('panel-total').innerHTML         = T[lang].panel_total(cl.count);
+  document.getElementById('panel-meta').textContent        =
+    (cl.first_year && cl.last_year)
+      ? `${t('panel_active')} ${T[lang].panel_years(cl.first_year, cl.last_year)}` : '';
+
+  document.getElementById('breakdown-chart').innerHTML = sorted.map(([type, count]) => `
+    <div class="breakdown-row">
+      <div class="breakdown-label"><span>${lbl(type)}</span><span class="count">${count}</span></div>
+      <div class="breakdown-bar-bg"><div class="breakdown-bar" style="width:${Math.round(100*count/max)}%"></div></div>
+    </div>
+  `).join('');
+
+  document.querySelectorAll('#street-panel [data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    if (typeof T[lang][key] === 'string') el.textContent = T[lang][key];
+  });
+
+  // GSV + OSM links use bbox centre
+  const lat = (bbox[1] + bbox[3]) / 2;
+  const lon = (bbox[0] + bbox[2]) / 2;
+  document.getElementById('gsv-link').href =
+    `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lon}`;
+  document.getElementById('osm-link').href =
+    `https://www.openstreetmap.org/#map=18/${lat.toFixed(6)}/${lon.toFixed(6)}`;
+
+  // Highlight all segments matching this street name
+  if (map.getLayer('streets-highlight'))
+    map.setFilter('streets-highlight', ['==', ['get', 'street_name'], cl.name]);
+
+  openPanel();
 }
 
 function exportStreetsCSV() {
