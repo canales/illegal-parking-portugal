@@ -280,7 +280,7 @@
 
     /* ── Street rankings panel ──────────────────────────────────────────── */
     #streets-panel {
-      background: rgba(13,13,22,0.92); border: 1px solid #285A48;
+      background: rgba(13,13,22,0.92); border: 1px solid #408A71;
       border-radius: 8px; overflow: hidden;
     }
     #streets-header {
@@ -309,11 +309,11 @@
     .street-name { font-size: 0.74rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; transition: color 0.15s; }
     .street-meta { display: flex; gap: 4px; align-items: center; }
     .street-bar-bg { flex: 1; height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
-    .street-bar    { height: 100%; background: #285A48; border-radius: 2px; }
+    .street-bar    { height: 100%; background: #408A71; border-radius: 2px; }
     .street-val    { font-size: 0.72rem; color: #B0E4CC; font-weight: 700; flex-shrink: 0; }
     #streets-export {
       display: block; width: 100%; margin-top: 10px;
-      padding: 7px 0; background: #111; border: 1px solid #285A48;
+      padding: 7px 0; background: #111; border: 1px solid #408A71;
       border-radius: 5px; color: #B0E4CC; font-size: 0.72rem; font-weight: 600;
       text-align: center; cursor: pointer; transition: all 0.15s;
     }
@@ -1013,19 +1013,19 @@ function initStreetLayers() {
       'line-opacity': 0.9
     }
   });
-  // Ranked streets — dark forest green (#285A48)
+  // Ranked streets — dark forest green (#408A71)
   map.addLayer({
     id: 'streets-ranked', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
     paint: {
-      'line-color': '#285A48',
+      'line-color': '#408A71',
       'line-width': ['interpolate', ['linear'], ['get', 'count'], 1, 3, 10, 5, 50, 7, 200, 11],
       'line-opacity': 1
     },
     filter: ['in', 'street_name', '']
   });
   // Selected street — light mint green (#B0E4CC), clearly distinct from
-  // the darker ranked streets (#285A48). Works on both dark and light basemaps.
+  // the darker ranked streets (#408A71). Works on both dark and light basemaps.
   map.addLayer({
     id: 'streets-highlight', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
