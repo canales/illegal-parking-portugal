@@ -1033,15 +1033,6 @@ function initStreetLayers() {
   map.setLayoutProperty('streets-ranked',    'visibility', 'none');
   map.setLayoutProperty('streets-highlight', 'visibility', 'none');
 }
-  map.addLayer({
-    id: 'streets-highlight', type: 'line', source: 'streets',
-    layout: { 'line-join': 'round', 'line-cap': 'round' },
-    paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.6 },
-    filter: ['==', ['id'], '']
-  });
-  map.setLayoutProperty('streets-line', 'visibility', 'none');
-  map.setLayoutProperty('streets-highlight', 'visibility', 'none');
-}
 
 function buildColorExpr() {
   if (!typeList.length) return '#e63946';
