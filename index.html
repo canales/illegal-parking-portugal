@@ -1076,7 +1076,7 @@ function initHexLayer() {
 }
 
 function initStreetLayers() {
-  map.addSource('streets', { type: 'geojson', data: streetData });
+  map.addSource('streets', { type: 'geojson', data: streetData, generateId: true });
   map.addLayer({
     id: 'streets-line', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
@@ -2291,11 +2291,11 @@ map.on('click', 'streets-line', e => {
   const p      = feat.properties;
   const lngLat = e.lngLat;
 
+  // generateId: true on the source means feat.id is always a valid integer,
+  // so we can highlight exactly the one segment clicked — not all segments
+  // sharing the same name+municipio.
   if (map.getLayer('streets-highlight'))
-    map.setFilter('streets-highlight', ['all',
-      ['==', ['get', 'street_name'], p.street_name ?? ''],
-      ['==', ['get', 'municipio'], p.municipio ?? '']
-    ]);
+    map.setFilter('streets-highlight', ['==', ['id'], feat.id]);
 
   let breakdown = {};
   try { breakdown = JSON.parse(p.type_breakdown || '{}'); } catch (_) {}
@@ -2337,13 +2337,13 @@ map.on('click', e => {
   closePanel();
   closePointPopup();
   hideTip();
-  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['get', 'street_name'], '']);
+  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], -1]);
 });
 
 function openPanel()  { document.getElementById('street-panel').classList.add('open'); }
 function closePanel() {
   document.getElementById('street-panel').classList.remove('open');
-  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['get', 'street_name'], '']);
+  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], -1]);
 }
 </script>
 </body>
