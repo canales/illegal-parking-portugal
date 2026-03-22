@@ -1137,6 +1137,8 @@ function renderUpdateBadge() {
   document.getElementById('stat-update-label').textContent = T[lang].stat_updated(d);
   document.getElementById('stat-update-wrap').style.display = '';
 }
+
+function updateStats(count) {
   if (!allData) return;
   const n = count !== undefined ? count : getFilteredFeatures().length;
   document.getElementById('stat-total').textContent = n.toLocaleString();
