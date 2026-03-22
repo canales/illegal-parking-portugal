@@ -1746,24 +1746,33 @@ function updateRankingsLang() {
  * Naive grouping by name alone would incorrectly merge unrelated streets.
  *
  * Solution: Union-Find (disjoint-set union) spatial clustering.
- * Two segments with the same name belong to the same cluster if they are
- * within STREET_CLUSTER_THRESHOLD_M (400m) of *any* segment already in
- * the cluster — not just the first one. This "nearest-neighbour chaining"
- * correctly handles long streets like Av. da Liberdade (~1km) where
- * consecutive segments are only 50-150m apart: they chain together into
- * one cluster even though first-to-last distance exceeds the threshold.
+ * Two segments with the same name belong to the same cluster if the
+ * minimum distance between any of their endpoints is within
+ * STREET_CLUSTER_THRESHOLD_M — not just the first one. This
+ * "nearest-neighbour chaining" correctly handles long streets like
+ * Av. da Liberdade (~1km) where consecutive segments share endpoints
+ * (0m apart at intersections) and chain together naturally.
  *
- * Two streets with the same name in different neighbourhoods (e.g. 5km
- * apart) form separate clusters and appear as distinct ranking entries.
+ * WHY ENDPOINTS INSTEAD OF MIDPOINTS:
+ * The previous implementation measured midpoint-to-midpoint distance with
+ * a 400m threshold. This caused false merges: two segments on parallel or
+ * perpendicular streets can have midpoints within 400m while being
+ * completely unrelated. Endpoint distance is geometrically correct —
+ * connected segments share an endpoint (0–5m apart due to GPS rounding),
+ * while unrelated segments on different streets have endpoints that are
+ * genuinely far apart. This allows a much tighter threshold (50m) which
+ * eliminates false merges entirely.
+ *
+ * Two streets with the same name in different neighbourhoods form separate
+ * clusters and appear as distinct ranking entries.
  * If multiple clusters share a name, a "(2)", "(3)" suffix disambiguates.
  *
- * Threshold: 400m — generous enough to bridge gaps at intersections or
- * where OSM is missing intermediate segments, tight enough to keep
- * genuinely separate streets in different clusters.
+ * Threshold: 50m — sufficient to connect segments at intersections
+ * (typically 0–20m endpoint gap) while rejecting unrelated streets.
  */
 
-// 400m threshold — see methodology comment above
-const STREET_CLUSTER_THRESHOLD_M = 400;
+// 50m endpoint threshold — see methodology comment above
+const STREET_CLUSTER_THRESHOLD_M = 50;
 const STREETS_MAX_RANK = 20;
 
 // Haversine distance in metres between two [lon, lat] points
@@ -1776,10 +1785,22 @@ function haversineM([lon1, lat1], [lon2, lat2]) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// Midpoint of a LineString geometry
+// Midpoint of a LineString geometry (kept for bbox reference)
 function segmentMidpoint(coords) {
   const mid = coords[Math.floor(coords.length / 2)];
   return mid;
+}
+
+// Minimum Haversine distance between any pair of endpoints of two segments.
+// Two connected segments share an endpoint (0–5m), unrelated segments do not.
+function minEndpointDist(segA, segB) {
+  const endA = [segA.coords[0], segA.coords[segA.coords.length - 1]];
+  const endB = [segB.coords[0], segB.coords[segB.coords.length - 1]];
+  let min = Infinity;
+  for (const a of endA)
+    for (const b of endB)
+      min = Math.min(min, haversineM(a, b));
+  return min;
 }
 
 /**
@@ -1822,12 +1843,14 @@ function clusterStreets(segments) {
   Object.values(groups).forEach(idxs => {
     if (idxs.length === 1) return; // single segment — no clustering needed
 
-    // For each pair within the group, union if within threshold.
-    // O(n²) within the group — fine since groups are tiny (typically 2-30).
+    // For each pair within the group, union if minimum endpoint distance
+    // is within threshold. Endpoint distance is geometrically correct:
+    // connected segments share an endpoint (0-5m gap), unrelated streets
+    // on different roads have endpoints that are genuinely far apart.
     for (let a = 0; a < idxs.length; a++) {
       for (let b = a + 1; b < idxs.length; b++) {
         const ia = idxs[a], ib = idxs[b];
-        const dist = haversineM(segments[ia].mid, segments[ib].mid);
+        const dist = minEndpointDist(segments[ia], segments[ib]);
         if (dist <= STREET_CLUSTER_THRESHOLD_M) {
           uf.union(ia, ib);
         }
