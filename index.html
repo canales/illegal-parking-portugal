@@ -1026,12 +1026,13 @@ function initStreetLayers() {
     },
     filter: ['in', 'street_name', '']
   });
-  // Selected street — deep vivid blue (#0047FF), darker than ranked streets
-  // to create a clear visual hierarchy: unranked → ranked (sky) → selected (deep).
+  // Selected street — bright white, thick line. Maximum contrast vs the
+  // sky blue ranked streets and the red/yellow infraction palette.
+  // White reads instantly as "selected" on all basemaps.
   map.addLayer({
     id: 'streets-highlight', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
-    paint: { 'line-color': '#0047FF', 'line-width': 7, 'line-opacity': 0.9 },
+    paint: { 'line-color': '#FFFFFF', 'line-width': 8, 'line-opacity': 0.95 },
     filter: ['==', ['id'], '']
   });
   map.setLayoutProperty('streets-line',      'visibility', 'none');
