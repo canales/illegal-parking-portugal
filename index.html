@@ -1980,13 +1980,24 @@ function renderStreetRankings() {
     .slice(0, STREETS_MAX_RANK);
 
   // Feature 1: highlight ranked streets in green on the map
+  // Filter by BOTH street_name AND municipio to avoid matching same-named
+  // streets in other municipalities across Portugal
   if (map.getLayer('streets-ranked')) {
-    if (rows.length > 0) {
+    if (rows.length > 0 && muni) {
       const names = rows.map(r => r.name);
-      // MapLibre 'in' filter: ['in', field, val1, val2, ...]
-      map.setFilter('streets-ranked', ['in', ['get', 'street_name'], ['literal', names]]);
+      map.setFilter('streets-ranked', ['all',
+        ['==', ['get', 'municipio'], muni],
+        ['in', ['get', 'street_name'], ['literal', names]]
+      ]);
+    } else if (rows.length > 0 && national) {
+      // National view: match name+municipio pairs using combined key
+      const pairs = rows.map(r => `${r.municipio}|||${r.name}`);
+      map.setFilter('streets-ranked', ['in',
+        ['concat', ['get', 'municipio'], ['literal', '|||'], ['get', 'street_name']],
+        ['literal', pairs]
+      ]);
     } else {
-      map.setFilter('streets-ranked', ['in', 'street_name', '']);
+      map.setFilter('streets-ranked', ['==', ['get', 'street_name'], '']);
     }
   }
 
@@ -2080,9 +2091,13 @@ function openPanelFromCluster(cl, bbox) {
   document.getElementById('osm-link').href =
     `https://www.openstreetmap.org/#map=18/${lat.toFixed(6)}/${lon.toFixed(6)}`;
 
-  // Highlight all segments matching this street name
+  // Highlight all segments matching this street name AND municipality
+  // (name alone would match same-named streets in other municipalities)
   if (map.getLayer('streets-highlight'))
-    map.setFilter('streets-highlight', ['==', ['get', 'street_name'], cl.name]);
+    map.setFilter('streets-highlight', ['all',
+      ['==', ['get', 'street_name'], cl.name],
+      ['==', ['get', 'municipio'], cl.municipio]
+    ]);
 
   openPanel();
 }
@@ -2277,7 +2292,10 @@ map.on('click', 'streets-line', e => {
   const lngLat = e.lngLat;
 
   if (map.getLayer('streets-highlight'))
-    map.setFilter('streets-highlight', ['==', ['get', 'street_name'], p.street_name ?? '']);
+    map.setFilter('streets-highlight', ['all',
+      ['==', ['get', 'street_name'], p.street_name ?? ''],
+      ['==', ['get', 'municipio'], p.municipio ?? '']
+    ]);
 
   let breakdown = {};
   try { breakdown = JSON.parse(p.type_breakdown || '{}'); } catch (_) {}
