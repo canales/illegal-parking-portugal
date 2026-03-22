@@ -280,7 +280,7 @@
 
     /* ── Street rankings panel ──────────────────────────────────────────── */
     #streets-panel {
-      background: rgba(13,13,22,0.92); border: 1px solid #FF6B00;
+      background: rgba(13,13,22,0.92); border: 1px solid #3B9EFF;
       border-radius: 8px; overflow: hidden;
     }
     #streets-header {
@@ -303,21 +303,21 @@
     #streets-list::-webkit-scrollbar { width: 3px; }
     #streets-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
     .street-row { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; cursor: pointer; }
-    .street-row:hover .street-name { color: #FF6B00; }
+    .street-row:hover .street-name { color: #3B9EFF; }
     .street-num  { font-size: 0.66rem; color: #444; min-width: 14px; text-align: right; flex-shrink: 0; }
     .street-bar-wrap { flex: 1; min-width: 0; }
     .street-name { font-size: 0.74rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; transition: color 0.15s; }
     .street-meta { display: flex; gap: 4px; align-items: center; }
     .street-bar-bg { flex: 1; height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
-    .street-bar    { height: 100%; background: #FF6B00; border-radius: 2px; }
-    .street-val    { font-size: 0.72rem; color: #FF6B00; font-weight: 700; flex-shrink: 0; }
+    .street-bar    { height: 100%; background: #3B9EFF; border-radius: 2px; }
+    .street-val    { font-size: 0.72rem; color: #3B9EFF; font-weight: 700; flex-shrink: 0; }
     #streets-export {
       display: block; width: 100%; margin-top: 10px;
       padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
-      border-radius: 5px; color: #FF6B00; font-size: 0.72rem; font-weight: 600;
+      border-radius: 5px; color: #3B9EFF; font-size: 0.72rem; font-weight: 600;
       text-align: center; cursor: pointer; transition: all 0.15s;
     }
-    #streets-export:hover { background: #2a1500; border-color: #FF6B00; }
+    #streets-export:hover { background: #0a1a2e; border-color: #3B9EFF; }
     #rankings-export {
       display: block; width: 100%; margin-top: 10px;
       padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
@@ -1013,23 +1013,25 @@ function initStreetLayers() {
       'line-opacity': 0.9
     }
   });
-  // Ranked streets highlight — drawn on top in vivid orange (#FF6B00).
-  // Chosen for high contrast on both dark and light basemaps, clearly
-  // distinct from the red infraction palette and basemap road colours.
+  // Ranked streets — bright sky blue (#3B9EFF), clearly distinct from the
+  // red/orange/yellow infraction palette. Lighter than the selected street
+  // colour so there's a visible hierarchy: ranked < selected.
   map.addLayer({
     id: 'streets-ranked', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
     paint: {
-      'line-color': '#FF6B00',
+      'line-color': '#3B9EFF',
       'line-width': ['interpolate', ['linear'], ['get', 'count'], 1, 3, 10, 5, 50, 7, 200, 11],
       'line-opacity': 1
     },
-    filter: ['in', 'street_name', '']   // empty by default — nothing highlighted
+    filter: ['in', 'street_name', '']
   });
+  // Selected street — deep vivid blue (#0047FF), darker than ranked streets
+  // to create a clear visual hierarchy: unranked → ranked (sky) → selected (deep).
   map.addLayer({
     id: 'streets-highlight', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
-    paint: { 'line-color': '#ffffff', 'line-width': 5, 'line-opacity': 0.6 },
+    paint: { 'line-color': '#0047FF', 'line-width': 7, 'line-opacity': 0.9 },
     filter: ['==', ['id'], '']
   });
   map.setLayoutProperty('streets-line',      'visibility', 'none');
@@ -1992,23 +1994,27 @@ function openPanelFromCluster(cl, bbox) {
 }
 
 function exportStreetsCSV() {
+  if (!streetClusters) return;
   const muni       = document.getElementById('streets-muni-filter').value;
   const typeFilter = document.getElementById('streets-type-filter').value;
   const typeLabel  = typeFilter === 'all' ? 'All' : (LABELS[lang][typeFilter] || typeFilter);
-  if (!muni || !streetClusters) return;
+  const national   = !muni;
 
   const rows = streetClusters
-    .filter(c => c.municipio === muni)
+    .filter(c => national || c.municipio === muni)
     .map(c => ({
-      name:  c.displayName,
+      name:  national ? `${c.displayName} · ${c.municipio}` : c.displayName,
       count: typeFilter === 'all' ? c.count : (c.typeBreakdown[typeFilter] || 0)
     }))
     .filter(r => r.count > 0)
     .sort((a, b) => b.count - a.count);
 
+  if (!rows.length) return;
+
+  const muniLabel = national ? 'All Portugal' : muni;
   const lines = [
     `# Illegal Parking in Portugal — Street Rankings Export`,
-    `# Municipality: ${muni}`,
+    `# Municipality: ${muniLabel}`,
     `# Infraction type: ${typeLabel}`,
     `# Generated: ${new Date().toISOString().substring(0, 10)}`,
     `# Source: https://canales.github.io/illegal-parking-portugal`,
@@ -2016,15 +2022,21 @@ function exportStreetsCSV() {
     `#   disambiguated as "Street Name (2)" etc. using spatial clustering`,
     `#   (union-find, 400m threshold). See METHODOLOGY.md for details.`,
     '',
-    'street,total_reports',
-    ...rows.map(r => `${r.name},${r.count}`)
+    national ? 'street,municipality,total_reports' : 'street,total_reports',
+    ...rows.map(r => national
+      ? `"${r.name}",${r.count}`
+      : `${r.name},${r.count}`)
   ];
+
+  const filename = national
+    ? `street-rankings_portugal_${typeFilter}.csv`
+    : `street-rankings_${muni}_${typeFilter}.csv`;
 
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url;
-  a.download = `street-rankings_${muni}_${typeFilter}.csv`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 }
