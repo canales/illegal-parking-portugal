@@ -273,7 +273,7 @@
 
     /* Scrollable list */
     #rankings-list {
-      max-height: 340px; overflow-y: auto;
+      max-height: 240px; overflow-y: auto;
     }
     #rankings-list::-webkit-scrollbar { width: 3px; }
     #rankings-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
@@ -1480,10 +1480,10 @@ function exportRankingsCSV() {
     Object.values(monthly).flatMap(m => Object.keys(m))
   )].sort();
 
-  // ── Assemble CSV ───────────────────────────────────────────────────────
+  // ── Assemble CSV — single wide table with section titles ──────────────
   const lines = [];
 
-  // Header block
+  // File header
   lines.push(`# Illegal Parking in Portugal — City Rankings Export`);
   lines.push(`# Period: ${periodStart} to ${periodEnd}`);
   lines.push(`# Infraction type: ${typeLabel}`);
@@ -1491,20 +1491,18 @@ function exportRankingsCSV() {
   lines.push(`# Source: https://canales.github.io/illegal-parking-portugal`);
   lines.push('');
 
-  // Summary section
-  lines.push('## SUMMARY');
-  lines.push('city,total_reports,road_km,reports_per_km_road');
-  rows.forEach(r => {
-    lines.push(`${r.muni},${r.count},${r.roadKm},${r.perKm}`);
-  });
-  lines.push('');
+  // Section title row — Summary on left, Monthly Breakdown aligned to its first column
+  // 4 summary cols + 1 blank buffer = Monthly Breakdown starts at col F (index 5)
+  const titleRow = ['# Summary', '', '', '', '', '# Monthly Breakdown — report count per city per month'];
+  lines.push(titleRow.join(','));
 
-  // Monthly breakdown section
-  lines.push('## MONTHLY BREAKDOWN');
-  lines.push(['city', ...allYM].join(','));
+  // Column headers
+  lines.push(['city', 'total_reports', 'road_km', 'reports_per_km_road', '', ...allYM].join(','));
+
+  // One row per city
   rows.forEach(r => {
-    const counts = allYM.map(ym => (monthly[r.muni]?.[ym] || 0));
-    lines.push([r.muni, ...counts].join(','));
+    const monthlyCounts = allYM.map(ym => (monthly[r.muni]?.[ym] || 0));
+    lines.push([r.muni, r.count, r.roadKm, r.perKm, '', ...monthlyCounts].join(','));
   });
 
   // ── Trigger download ───────────────────────────────────────────────────
