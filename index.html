@@ -204,7 +204,7 @@
     .legend-swatch { width: 28px; height: 5px; border-radius: 3px; flex-shrink: 0; }
 
     /* ── Data note ──────────────────────────────────────────────────────── */
-    #data-note { position: absolute; bottom: 52px; left: 10px; font-size: 0.65rem; color: #555; z-index: 5; pointer-events: none; }
+    #data-note { position: absolute; bottom: 62px; left: 10px; font-size: 0.65rem; color: #555; z-index: 5; pointer-events: none; }
     #data-note a { color: #4a9eff; text-decoration: none; pointer-events: all; }
 
     /* ── Left panel column ──────────────────────────────────────────────── */
@@ -273,10 +273,19 @@
 
     /* Scrollable list */
     #rankings-list {
-      max-height: 260px; overflow-y: auto;
+      max-height: 340px; overflow-y: auto;
     }
     #rankings-list::-webkit-scrollbar { width: 3px; }
     #rankings-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+    /* ── CSV export button ──────────────────────────────────────────────── */
+    #rankings-export {
+      display: block; width: 100%; margin-top: 10px;
+      padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
+      border-radius: 5px; color: #4a9eff; font-size: 0.72rem; font-weight: 600;
+      text-align: center; cursor: pointer; transition: all 0.15s;
+    }
+    #rankings-export:hover { background: #1a2a3a; border-color: #4a9eff; }
     .rank-row { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; }
     .rank-num  { font-size: 0.66rem; color: #444; min-width: 14px; text-align: right; flex-shrink: 0; }
     .rank-bar-wrap { flex: 1; }
@@ -429,6 +438,7 @@
           <option value="all" data-i18n="filter_all">All</option>
         </select>
         <div id="rankings-list"></div>
+        <button id="rankings-export" onclick="exportRankingsCSV()" data-i18n="rankings_export">⬇ Download CSV</button>
       </div>
     </div>
   </div>
@@ -496,6 +506,7 @@ const T = {
     rankings_title:  'City rankings',
     rmode_total:     'Total',
     rmode_perkm:     'Per km road',
+    rankings_export: '⬇ Download CSV',
     month_names:     ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   },
   pt: {
@@ -534,6 +545,7 @@ const T = {
     rankings_title:  'Ranking de cidades',
     rmode_total:     'Total',
     rmode_perkm:     'Por km de via',
+    rankings_export: '⬇ Descarregar CSV',
     month_names:     ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'],
   }
 };
@@ -1430,7 +1442,80 @@ function toggleRankings() {
 function positionRankingsPanel() {}
 
 // Update rankings dropdown labels when language changes
-function updateRankingsLang() {
+function exportRankingsCSV() {
+  if (!muniStats) return;
+
+  const typeFilter  = document.getElementById('rankings-type-filter').value;
+  const periodStart = months.length ? months[startMonthIdx] : '—';
+  const periodEnd   = months.length ? months[endMonthIdx]   : '—';
+  const typeLabel   = typeFilter === 'all' ? 'All' : (LABELS[lang][typeFilter] || typeFilter);
+
+  // ── Build per-city summary ─────────────────────────────────────────────
+  const rows = Object.entries(muniStats)
+    .map(([muni, s]) => {
+      const count  = typeFilter === 'all' ? s.total : (s.byType[typeFilter] || 0);
+      const roadKm = (muniRoadLengths[muni] || 0).toFixed(2);
+      const perKm  = roadKm > 0 ? (count / roadKm).toFixed(2) : '';
+      return { muni, count, roadKm, perKm };
+    })
+    .filter(r => r.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  // ── Build monthly breakdown per city ──────────────────────────────────
+  // Use the filtered features already in scope
+  const filtered = getFilteredFeatures();
+  const monthly  = {};  // { muni: { 'YYYY-MM': count } }
+  filtered.forEach(f => {
+    const muni = getMuni(f);
+    if (!muni) return;
+    if (typeFilter !== 'all' && f.properties.infraction_type !== typeFilter) return;
+    const ym = (f.properties.data_data || '').substring(0, 7);
+    if (!ym) return;
+    if (!monthly[muni]) monthly[muni] = {};
+    monthly[muni][ym] = (monthly[muni][ym] || 0) + 1;
+  });
+
+  // Collect all year-months present, sorted
+  const allYM = [...new Set(
+    Object.values(monthly).flatMap(m => Object.keys(m))
+  )].sort();
+
+  // ── Assemble CSV ───────────────────────────────────────────────────────
+  const lines = [];
+
+  // Header block
+  lines.push(`# Illegal Parking in Portugal — City Rankings Export`);
+  lines.push(`# Period: ${periodStart} to ${periodEnd}`);
+  lines.push(`# Infraction type: ${typeLabel}`);
+  lines.push(`# Generated: ${new Date().toISOString().substring(0, 10)}`);
+  lines.push(`# Source: https://canales.github.io/illegal-parking-portugal`);
+  lines.push('');
+
+  // Summary section
+  lines.push('## SUMMARY');
+  lines.push('city,total_reports,road_km,reports_per_km_road');
+  rows.forEach(r => {
+    lines.push(`${r.muni},${r.count},${r.roadKm},${r.perKm}`);
+  });
+  lines.push('');
+
+  // Monthly breakdown section
+  lines.push('## MONTHLY BREAKDOWN');
+  lines.push(['city', ...allYM].join(','));
+  rows.forEach(r => {
+    const counts = allYM.map(ym => (monthly[r.muni]?.[ym] || 0));
+    lines.push([r.muni, ...counts].join(','));
+  });
+
+  // ── Trigger download ───────────────────────────────────────────────────
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `parking-rankings_${periodStart}_${periodEnd}_${typeFilter}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
   const sel = document.getElementById('rankings-type-filter');
   Array.from(sel.options).forEach(opt => {
     opt.textContent = opt.value === 'all' ? T[lang].filter_all : (LABELS[lang][opt.value] || opt.value);
