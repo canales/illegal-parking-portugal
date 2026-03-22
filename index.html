@@ -278,7 +278,46 @@
     #rankings-list::-webkit-scrollbar { width: 3px; }
     #rankings-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 
-    /* ── CSV export button ──────────────────────────────────────────────── */
+    /* ── Street rankings panel ──────────────────────────────────────────── */
+    #streets-panel {
+      background: rgba(13,13,22,0.92); border: 1px solid #2dd4a0;
+      border-radius: 8px; overflow: hidden;
+    }
+    #streets-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 11px; cursor: pointer; user-select: none;
+    }
+    #streets-header span { font-size: 0.76rem; font-weight: 700; color: #ccc; text-transform: uppercase; letter-spacing: 0.6px; }
+    #streets-toggle { font-size: 0.65rem; color: #555; transition: transform 0.2s; }
+    #streets-panel.collapsed #streets-toggle { transform: rotate(-90deg); }
+    #streets-body { padding: 6px 11px 10px; }
+    #streets-panel.collapsed #streets-body { display: none; }
+    #streets-muni-filter, #streets-type-filter {
+      width: 100%; background: #111; border: 1px solid #2a2a3a;
+      color: #aaa; padding: 3px 6px; border-radius: 4px;
+      font-size: 0.68rem; margin-bottom: 6px;
+    }
+    #streets-list {
+      max-height: 260px; overflow-y: auto;
+    }
+    #streets-list::-webkit-scrollbar { width: 3px; }
+    #streets-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    .street-row { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; cursor: pointer; }
+    .street-row:hover .street-name { color: #2dd4a0; }
+    .street-num  { font-size: 0.66rem; color: #444; min-width: 14px; text-align: right; flex-shrink: 0; }
+    .street-bar-wrap { flex: 1; min-width: 0; }
+    .street-name { font-size: 0.74rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; transition: color 0.15s; }
+    .street-meta { display: flex; gap: 4px; align-items: center; }
+    .street-bar-bg { flex: 1; height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
+    .street-bar    { height: 100%; background: #2dd4a0; border-radius: 2px; }
+    .street-val    { font-size: 0.72rem; color: #2dd4a0; font-weight: 700; flex-shrink: 0; }
+    #streets-export {
+      display: block; width: 100%; margin-top: 10px;
+      padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
+      border-radius: 5px; color: #2dd4a0; font-size: 0.72rem; font-weight: 600;
+      text-align: center; cursor: pointer; transition: all 0.15s;
+    }
+    #streets-export:hover { background: #0d2a22; border-color: #2dd4a0; }
     #rankings-export {
       display: block; width: 100%; margin-top: 10px;
       padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
@@ -445,6 +484,24 @@
         <button id="rankings-export" onclick="exportRankingsCSV()" data-i18n="rankings_export">⬇ Download CSV</button>
       </div>
     </div>
+
+    <!-- Street rankings panel -->
+    <div id="streets-panel" class="collapsed">
+      <div id="streets-header" onclick="toggleStreets()">
+        <span data-i18n="streets_rank_title">Street rankings</span>
+        <span id="streets-toggle">▾</span>
+      </div>
+      <div id="streets-body">
+        <select id="streets-muni-filter" onchange="renderStreetRankings()">
+          <option value="" data-i18n="streets_muni_all">— Select municipality —</option>
+        </select>
+        <select id="streets-type-filter" onchange="renderStreetRankings()">
+          <option value="all" data-i18n="filter_all">All</option>
+        </select>
+        <div id="streets-list"></div>
+        <button id="streets-export" onclick="exportStreetsCSV()" data-i18n="streets_export">⬇ Download CSV</button>
+      </div>
+    </div>
   </div>
 
   <!-- Timeline bar -->
@@ -513,6 +570,10 @@ const T = {
     rmode_total:     'Total',
     rmode_perkm:     'Per km road',
     rankings_export: '⬇ Download CSV',
+    streets_rank_title: 'Street rankings',
+    streets_muni_all:   '— Select municipality —',
+    streets_export:     '⬇ Download CSV',
+    streets_no_data:    'Select a municipality above',
     month_names:     ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   },
   pt: {
@@ -554,6 +615,10 @@ const T = {
     rmode_total:     'Total',
     rmode_perkm:     'Por km de via',
     rankings_export: '⬇ Descarregar CSV',
+    streets_rank_title: 'Ranking de ruas',
+    streets_muni_all:   '— Selecionar município —',
+    streets_export:     '⬇ Descarregar CSV',
+    streets_no_data:    'Selecione um município acima',
     month_names:     ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'],
   }
 };
@@ -779,6 +844,7 @@ map.on('load', async () => {
   initAllLayers();
   updateStats();
   if (allData) initRankings();
+  if (streetData) initStreetRankings();
 
   // Render update badge if stats.json loaded successfully
   if (statsRes.status === 'fulfilled') {
@@ -1554,6 +1620,299 @@ function updateRankingsLang() {
   Array.from(sel.options).forEach(opt => {
     opt.textContent = opt.value === 'all' ? T[lang].filter_all : (LABELS[lang][opt.value] || opt.value);
   });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// STREET RANKINGS — union-find clustering by name + municipality
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * METHODOLOGY: Street deduplication via union-find spatial clustering
+ *
+ * Problem: The same street name (e.g. "Rua de Santo António") can appear
+ * multiple times within a single municipality — either as multiple OSM
+ * segments of one long street, or as completely different streets in
+ * different neighbourhoods that happen to share a name.
+ *
+ * Naive grouping by name alone would incorrectly merge unrelated streets.
+ *
+ * Solution: Union-Find (disjoint-set union) spatial clustering.
+ * Two segments with the same name belong to the same cluster if they are
+ * within STREET_CLUSTER_THRESHOLD_M (400m) of *any* segment already in
+ * the cluster — not just the first one. This "nearest-neighbour chaining"
+ * correctly handles long streets like Av. da Liberdade (~1km) where
+ * consecutive segments are only 50-150m apart: they chain together into
+ * one cluster even though first-to-last distance exceeds the threshold.
+ *
+ * Two streets with the same name in different neighbourhoods (e.g. 5km
+ * apart) form separate clusters and appear as distinct ranking entries.
+ * If multiple clusters share a name, a "(2)", "(3)" suffix disambiguates.
+ *
+ * Threshold: 400m — generous enough to bridge gaps at intersections or
+ * where OSM is missing intermediate segments, tight enough to keep
+ * genuinely separate streets in different clusters.
+ */
+
+// 400m threshold — see methodology comment above
+const STREET_CLUSTER_THRESHOLD_M = 400;
+const STREETS_MAX_RANK = 20;
+
+// Haversine distance in metres between two [lon, lat] points
+function haversineM([lon1, lat1], [lon2, lat2]) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Midpoint of a LineString geometry
+function segmentMidpoint(coords) {
+  const mid = coords[Math.floor(coords.length / 2)];
+  return mid;
+}
+
+/**
+ * Union-Find data structure.
+ * find(i) returns the root of element i's cluster.
+ * union(i, j) merges the clusters of i and j.
+ */
+function makeUnionFind(n) {
+  const parent = Array.from({length: n}, (_, i) => i);
+  const rank   = new Array(n).fill(0);
+  function find(i) {
+    if (parent[i] !== i) parent[i] = find(parent[i]); // path compression
+    return parent[i];
+  }
+  function union(i, j) {
+    const ri = find(i), rj = find(j);
+    if (ri === rj) return;
+    if (rank[ri] < rank[rj]) parent[ri] = rj;
+    else if (rank[ri] > rank[rj]) parent[rj] = ri;
+    else { parent[rj] = ri; rank[ri]++; }
+  }
+  return { find, union };
+}
+
+/**
+ * Cluster segments of the same name+municipio using union-find.
+ * Returns array of clusters: { name, municipio, count, bbox, segments }
+ */
+function clusterStreets(segments) {
+  // Group by name + municipio first (cheap pre-filter)
+  const groups = {};
+  segments.forEach((seg, i) => {
+    const key = `${seg.municipio}|||${seg.name}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(i);
+  });
+
+  const uf = makeUnionFind(segments.length);
+
+  Object.values(groups).forEach(idxs => {
+    if (idxs.length === 1) return; // single segment — no clustering needed
+
+    // For each pair within the group, union if within threshold.
+    // O(n²) within the group — fine since groups are tiny (typically 2-30).
+    for (let a = 0; a < idxs.length; a++) {
+      for (let b = a + 1; b < idxs.length; b++) {
+        const ia = idxs[a], ib = idxs[b];
+        const dist = haversineM(segments[ia].mid, segments[ib].mid);
+        if (dist <= STREET_CLUSTER_THRESHOLD_M) {
+          uf.union(ia, ib);
+        }
+      }
+    }
+  });
+
+  // Aggregate clusters
+  const clusterMap = {};
+  segments.forEach((seg, i) => {
+    const root = uf.find(i);
+    if (!clusterMap[root]) {
+      clusterMap[root] = {
+        name: seg.name, municipio: seg.municipio,
+        count: 0, bbox: [Infinity, Infinity, -Infinity, -Infinity],
+        typeBreakdown: {}
+      };
+    }
+    const c = clusterMap[root];
+    c.count += seg.count;
+    // Expand bounding box
+    const coords = seg.coords;
+    coords.forEach(([lon, lat]) => {
+      if (lon < c.bbox[0]) c.bbox[0] = lon;
+      if (lat < c.bbox[1]) c.bbox[1] = lat;
+      if (lon > c.bbox[2]) c.bbox[2] = lon;
+      if (lat > c.bbox[3]) c.bbox[3] = lat;
+    });
+    // Merge type breakdowns
+    Object.entries(seg.typeBreakdown).forEach(([type, n]) => {
+      c.typeBreakdown[type] = (c.typeBreakdown[type] || 0) + n;
+    });
+  });
+
+  // Disambiguate clusters that share the same name within a municipio
+  const clusters = Object.values(clusterMap);
+  const nameCounts = {};
+  clusters.forEach(c => {
+    const k = `${c.municipio}|||${c.name}`;
+    nameCounts[k] = (nameCounts[k] || 0) + 1;
+  });
+  const nameIdx = {};
+  clusters.forEach(c => {
+    const k = `${c.municipio}|||${c.name}`;
+    if (nameCounts[k] > 1) {
+      nameIdx[k] = (nameIdx[k] || 0) + 1;
+      c.displayName = `${c.name} (${nameIdx[k]})`;
+    } else {
+      c.displayName = c.name;
+    }
+  });
+
+  return clusters;
+}
+
+// ── Street rankings state ──────────────────────────────────────────────────
+let streetClusters    = null;   // all clusters, built once from streetData
+let streetMuniList    = [];     // sorted list of municipalities with street data
+
+function initStreetRankings() {
+  if (!streetData) return;
+
+  // Build segment objects from streetData features
+  // Skip unnamed streets (name is null/empty) — they can't meaningfully rank
+  const segments = streetData.features
+    .filter(f => f.properties.street_name && f.properties.municipio)
+    .map(f => ({
+      name:          f.properties.street_name,
+      municipio:     f.properties.municipio,
+      count:         f.properties.count || 0,
+      mid:           segmentMidpoint(f.geometry.coordinates),
+      coords:        f.geometry.coordinates,
+      typeBreakdown: (() => { try { return JSON.parse(f.properties.type_breakdown || '{}'); } catch(_) { return {}; } })()
+    }));
+
+  streetClusters = clusterStreets(segments);
+
+  // Populate municipality dropdown — sorted alphabetically
+  streetMuniList = [...new Set(streetClusters.map(c => c.municipio))].sort();
+  const sel = document.getElementById('streets-muni-filter');
+  streetMuniList.forEach(muni => {
+    const opt = document.createElement('option');
+    opt.value = muni;
+    opt.textContent = muni;
+    sel.appendChild(opt);
+  });
+
+  // Populate infraction type filter — same order as main dropdown
+  const typeSel = document.getElementById('streets-type-filter');
+  typeList.forEach(type => {
+    const opt = document.createElement('option');
+    opt.value = type;
+    opt.textContent = lbl(type);
+    typeSel.appendChild(opt);
+  });
+}
+
+function toggleStreets() {
+  document.getElementById('streets-panel').classList.toggle('collapsed');
+}
+
+function renderStreetRankings() {
+  if (!streetClusters) return;
+  const muni       = document.getElementById('streets-muni-filter').value;
+  const typeFilter = document.getElementById('streets-type-filter').value;
+  const listEl     = document.getElementById('streets-list');
+
+  if (!muni) {
+    listEl.innerHTML = `<div style="font-size:0.72rem;color:#555;padding:6px 0">${t('streets_no_data')}</div>`;
+    return;
+  }
+
+  // Filter to selected municipality and type, score by count
+  let rows = streetClusters
+    .filter(c => c.municipio === muni)
+    .map(c => {
+      const count = typeFilter === 'all'
+        ? c.count
+        : (c.typeBreakdown[typeFilter] || 0);
+      return { ...c, filteredCount: count };
+    })
+    .filter(r => r.filteredCount > 0)
+    .sort((a, b) => b.filteredCount - a.filteredCount)
+    .slice(0, STREETS_MAX_RANK);
+
+  if (!rows.length) {
+    listEl.innerHTML = `<div style="font-size:0.72rem;color:#555;padding:6px 0">No data for this selection</div>`;
+    return;
+  }
+
+  const maxVal = rows[0].filteredCount;
+  listEl.innerHTML = rows.map((r, i) => {
+    const barPct = Math.round(100 * r.filteredCount / maxVal);
+    return `
+      <div class="street-row" onclick="flyToStreet(${JSON.stringify(r.bbox)})">
+        <div class="street-num">${i + 1}</div>
+        <div class="street-bar-wrap">
+          <div class="street-name" title="${r.displayName}">${r.displayName}</div>
+          <div class="street-meta">
+            <div class="street-bar-bg"><div class="street-bar" style="width:${barPct}%"></div></div>
+            <div class="street-val">${r.filteredCount.toLocaleString()}</div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// Fly map to a street's bounding box on click
+function flyToStreet(bbox) {
+  // bbox = [minLon, minLat, maxLon, maxLat]
+  // Add small padding so the street isn't flush against the viewport edge
+  const pad = 0.002;
+  map.fitBounds(
+    [[bbox[0] - pad, bbox[1] - pad], [bbox[2] + pad, bbox[3] + pad]],
+    { padding: 60, maxZoom: 17, duration: 800 }
+  );
+}
+
+function exportStreetsCSV() {
+  const muni       = document.getElementById('streets-muni-filter').value;
+  const typeFilter = document.getElementById('streets-type-filter').value;
+  const typeLabel  = typeFilter === 'all' ? 'All' : (LABELS[lang][typeFilter] || typeFilter);
+  if (!muni || !streetClusters) return;
+
+  const rows = streetClusters
+    .filter(c => c.municipio === muni)
+    .map(c => ({
+      name:  c.displayName,
+      count: typeFilter === 'all' ? c.count : (c.typeBreakdown[typeFilter] || 0)
+    }))
+    .filter(r => r.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  const lines = [
+    `# Illegal Parking in Portugal — Street Rankings Export`,
+    `# Municipality: ${muni}`,
+    `# Infraction type: ${typeLabel}`,
+    `# Generated: ${new Date().toISOString().substring(0, 10)}`,
+    `# Source: https://canales.github.io/illegal-parking-portugal`,
+    `# Note: Streets with the same name in different neighbourhoods are`,
+    `#   disambiguated as "Street Name (2)" etc. using spatial clustering`,
+    `#   (union-find, 400m threshold). See METHODOLOGY.md for details.`,
+    '',
+    'street,total_reports',
+    ...rows.map(r => `${r.name},${r.count}`)
+  ];
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `street-rankings_${muni}_${typeFilter}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
