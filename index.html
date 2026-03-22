@@ -322,6 +322,10 @@
     <div class="stat"><div class="number" id="stat-total">—</div><div class="label" data-i18n="stat_reports">Reports</div></div>
     <div class="stat"><div class="number">2020–2026</div><div class="label" data-i18n="stat_period">Period</div></div>
     <div class="stat"><div class="number" id="stat-types">—</div><div class="label" data-i18n="stat_types">Types</div></div>
+    <div class="stat" id="stat-update-wrap" style="display:none">
+      <div class="number" id="stat-new-count" style="font-size:1rem">—</div>
+      <div class="label" id="stat-update-label" style="white-space:nowrap">—</div>
+    </div>
   </div>
   <div class="banner-right">
     <div id="lang-toggle">
@@ -477,6 +481,8 @@ const T = {
     stat_reports:    'Reports',
     stat_period:     'Period',
     stat_types:      'Types',
+    stat_updated:    d => `Updated ${d}`,
+    stat_new:        n => `+${n} reports`,
     survey_btn:      'Take the Lisbon City Hall Survey →',
     filter_label:    'Infraction type:',
     filter_all:      'All',
@@ -516,6 +522,8 @@ const T = {
     stat_reports:    'Denúncias',
     stat_period:     'Período',
     stat_types:      'Tipos',
+    stat_updated:    d => `Atualizado a ${d}`,
+    stat_new:        n => `+${n} denúncias`,
     survey_btn:      'Responder ao Inquérito da CML →',
     filter_label:    'Tipo de infração:',
     filter_all:      'Todos',
@@ -729,6 +737,7 @@ function setLang(l) {
     updateStatsPanel(filtered);
     updateRankingsLang();
   }
+  renderUpdateBadge();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -744,11 +753,14 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
+const STATS_URL   = 'data/stats.json';
+
 // ── Load data ──────────────────────────────────────────────────────────────
 map.on('load', async () => {
-  const [ptRes, stRes] = await Promise.allSettled([
+  const [ptRes, stRes, statsRes] = await Promise.allSettled([
     fetch(POINTS_URL).then(r => r.ok ? r.json() : Promise.reject()),
-    fetch(STREETS_URL).then(r => r.ok ? r.json() : Promise.reject())
+    fetch(STREETS_URL).then(r => r.ok ? r.json() : Promise.reject()),
+    fetch(STATS_URL).then(r => r.ok ? r.json() : Promise.reject())
   ]);
 
   if (ptRes.status === 'fulfilled') {
@@ -767,6 +779,19 @@ map.on('load', async () => {
   initAllLayers();
   updateStats();
   if (allData) initRankings();
+
+  // Render update badge if stats.json loaded successfully
+  if (statsRes.status === 'fulfilled') {
+    const s = statsRes.value;
+    if (s.new_count > 0) {
+      // Format date nicely: "2026-03-21" → "March 21" / "21 de março"
+      const dateObj  = new Date(s.updated_date + 'T12:00:00Z');
+      const enDate   = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
+      const ptDate   = dateObj.toLocaleDateString('pt-PT', { day: 'numeric', month: 'long' });
+      window._statsData = { new_count: s.new_count, enDate, ptDate };
+      renderUpdateBadge();
+    }
+  }
 });
 
 // ── Re-add all layers (called on initial load and after every style swap) ──
@@ -1104,7 +1129,14 @@ function applyAllFilters() {
   }
 }
 
-function updateStats(count) {
+function renderUpdateBadge() {
+  if (!window._statsData) return;
+  const { new_count, enDate, ptDate } = window._statsData;
+  const d = lang === 'pt' ? ptDate : enDate;
+  document.getElementById('stat-new-count').textContent  = T[lang].stat_new(new_count);
+  document.getElementById('stat-update-label').textContent = T[lang].stat_updated(d);
+  document.getElementById('stat-update-wrap').style.display = '';
+}
   if (!allData) return;
   const n = count !== undefined ? count : getFilteredFeatures().length;
   document.getElementById('stat-total').textContent = n.toLocaleString();
