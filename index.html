@@ -2181,7 +2181,7 @@ map.on('click', 'streets-line', e => {
   const lngLat = e.lngLat;
 
   if (map.getLayer('streets-highlight'))
-    map.setFilter('streets-highlight', ['==', ['id'], feat.id ?? '']);
+    map.setFilter('streets-highlight', ['==', ['get', 'street_name'], p.street_name ?? '']);
 
   let breakdown = {};
   try { breakdown = JSON.parse(p.type_breakdown || '{}'); } catch (_) {}
@@ -2223,13 +2223,13 @@ map.on('click', e => {
   closePanel();
   closePointPopup();
   hideTip();
-  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], '']);
+  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['get', 'street_name'], '']);
 });
 
 function openPanel()  { document.getElementById('street-panel').classList.add('open'); }
 function closePanel() {
   document.getElementById('street-panel').classList.remove('open');
-  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], '']);
+  if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['get', 'street_name'], '']);
 }
 </script>
 </body>
