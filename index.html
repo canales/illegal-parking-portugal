@@ -333,6 +333,79 @@
     .rank-bar-bg { flex: 1; height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
     .rank-bar    { height: 100%; background: #e63946; border-radius: 2px; }
     .rank-val    { font-size: 0.72rem; color: #e63946; font-weight: 700; flex-shrink: 0; }
+    /* ════════════════════════════════════════════════════════════════════
+       MOBILE — easy wins only (≤768px)
+       Hard parts deferred: controls bar redesign, bottom-sheet panel
+    ════════════════════════════════════════════════════════════════════ */
+    @media (max-width: 768px) {
+
+      /* ── Banner ── */
+      #banner {
+        padding: 8px 12px; gap: 6px;
+      }
+      #banner .title  { font-size: 0.88rem; }
+      #banner .subtitle { font-size: 0.68rem; }
+      #banner .stats  { gap: 10px; }
+      .stat .number   { font-size: 1rem; }
+      .stat .label    { font-size: 0.58rem; }
+      .survey-btn     { font-size: 0.7rem; padding: 5px 10px; }
+      #banner > div:first-child > div:last-child { font-size: 0.55rem; }
+
+      /* ── Controls bar — allow wrapping, slightly smaller ── */
+      #controls {
+        padding: 6px 10px; gap: 8px;
+      }
+      #controls label  { font-size: 0.68rem; }
+      #controls select { font-size: 0.72rem; padding: 3px 6px; }
+      .toggle-btn      { padding: 4px 8px; font-size: 0.68rem; }
+      /* Hide opacity slider on mobile — too fiddly */
+      #opacity-wrap    { display: none !important; }
+
+      /* ── Left panels — full width, max height with scroll ── */
+      #left-panels {
+        width: calc(100% - 20px);
+        max-height: 45vh;
+        overflow-y: auto;
+      }
+      /* All panels collapsed by default on mobile */
+      #stats-panel:not(.collapsed) #stats-body,
+      #rankings-panel:not(.collapsed) #rankings-body,
+      #streets-panel:not(.collapsed) #streets-body {
+        max-height: 180px;
+        overflow-y: auto;
+      }
+
+      /* ── Street detail panel — full width slide-in from right ── */
+      #street-panel {
+        width: 100%;
+        /* Still slides from right, just full width */
+      }
+
+      /* ── Point popup — constrain width on small screens ── */
+      #point-popup {
+        max-width: 88vw;
+      }
+
+      /* ── Timeline — larger touch targets ── */
+      .timeline-range::-webkit-slider-thumb {
+        width: 20px; height: 20px;
+      }
+      .timeline-range::-moz-range-thumb {
+        width: 20px; height: 20px;
+      }
+      #play-btn {
+        width: 36px; height: 36px; font-size: 0.85rem;
+      }
+
+      /* ── Data note — hide on mobile, too cramped ── */
+      #data-note { display: none; }
+
+      /* ── Legend — reposition above timeline ── */
+      #legend {
+        bottom: 68px; right: 8px; left: 8px;
+        font-size: 0.65rem;
+      }
+    }
   </style>
 </head>
 <body>
