@@ -280,7 +280,7 @@
 
     /* ── Street rankings panel ──────────────────────────────────────────── */
     #streets-panel {
-      background: rgba(13,13,22,0.92); border: 1px solid #3B9EFF;
+      background: rgba(13,13,22,0.92); border: 1px solid #285A48;
       border-radius: 8px; overflow: hidden;
     }
     #streets-header {
@@ -303,21 +303,21 @@
     #streets-list::-webkit-scrollbar { width: 3px; }
     #streets-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
     .street-row { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; cursor: pointer; }
-    .street-row:hover .street-name { color: #3B9EFF; }
+    .street-row:hover .street-name { color: #B0E4CC; }
     .street-num  { font-size: 0.66rem; color: #444; min-width: 14px; text-align: right; flex-shrink: 0; }
     .street-bar-wrap { flex: 1; min-width: 0; }
     .street-name { font-size: 0.74rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; transition: color 0.15s; }
     .street-meta { display: flex; gap: 4px; align-items: center; }
     .street-bar-bg { flex: 1; height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
-    .street-bar    { height: 100%; background: #3B9EFF; border-radius: 2px; }
-    .street-val    { font-size: 0.72rem; color: #3B9EFF; font-weight: 700; flex-shrink: 0; }
+    .street-bar    { height: 100%; background: #285A48; border-radius: 2px; }
+    .street-val    { font-size: 0.72rem; color: #B0E4CC; font-weight: 700; flex-shrink: 0; }
     #streets-export {
       display: block; width: 100%; margin-top: 10px;
-      padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
-      border-radius: 5px; color: #3B9EFF; font-size: 0.72rem; font-weight: 600;
+      padding: 7px 0; background: #111; border: 1px solid #285A48;
+      border-radius: 5px; color: #B0E4CC; font-size: 0.72rem; font-weight: 600;
       text-align: center; cursor: pointer; transition: all 0.15s;
     }
-    #streets-export:hover { background: #0a1a2e; border-color: #3B9EFF; }
+    #streets-export:hover { background: #0d1f18; border-color: #B0E4CC; }
     #rankings-export {
       display: block; width: 100%; margin-top: 10px;
       padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
@@ -1013,26 +1013,23 @@ function initStreetLayers() {
       'line-opacity': 0.9
     }
   });
-  // Ranked streets — bright sky blue (#3B9EFF), clearly distinct from the
-  // red/orange/yellow infraction palette. Lighter than the selected street
-  // colour so there's a visible hierarchy: ranked < selected.
+  // Ranked streets — dark forest green (#285A48)
   map.addLayer({
     id: 'streets-ranked', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
     paint: {
-      'line-color': '#3B9EFF',
+      'line-color': '#285A48',
       'line-width': ['interpolate', ['linear'], ['get', 'count'], 1, 3, 10, 5, 50, 7, 200, 11],
       'line-opacity': 1
     },
     filter: ['in', 'street_name', '']
   });
-  // Selected street — bright white, thick line. Maximum contrast vs the
-  // sky blue ranked streets and the red/yellow infraction palette.
-  // White reads instantly as "selected" on all basemaps.
+  // Selected street — light mint green (#B0E4CC), clearly distinct from
+  // the darker ranked streets (#285A48). Works on both dark and light basemaps.
   map.addLayer({
     id: 'streets-highlight', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
-    paint: { 'line-color': '#FFFFFF', 'line-width': 8, 'line-opacity': 0.95 },
+    paint: { 'line-color': '#B0E4CC', 'line-width': 8, 'line-opacity': 0.95 },
     filter: ['==', ['id'], '']
   });
   map.setLayoutProperty('streets-line',      'visibility', 'none');
