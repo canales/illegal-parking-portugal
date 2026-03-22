@@ -280,7 +280,7 @@
 
     /* ── Street rankings panel ──────────────────────────────────────────── */
     #streets-panel {
-      background: rgba(13,13,22,0.92); border: 1px solid #2dd4a0;
+      background: rgba(13,13,22,0.92); border: 1px solid #FF6B00;
       border-radius: 8px; overflow: hidden;
     }
     #streets-header {
@@ -303,21 +303,21 @@
     #streets-list::-webkit-scrollbar { width: 3px; }
     #streets-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
     .street-row { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; cursor: pointer; }
-    .street-row:hover .street-name { color: #2dd4a0; }
+    .street-row:hover .street-name { color: #FF6B00; }
     .street-num  { font-size: 0.66rem; color: #444; min-width: 14px; text-align: right; flex-shrink: 0; }
     .street-bar-wrap { flex: 1; min-width: 0; }
     .street-name { font-size: 0.74rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; transition: color 0.15s; }
     .street-meta { display: flex; gap: 4px; align-items: center; }
     .street-bar-bg { flex: 1; height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
-    .street-bar    { height: 100%; background: #2dd4a0; border-radius: 2px; }
-    .street-val    { font-size: 0.72rem; color: #2dd4a0; font-weight: 700; flex-shrink: 0; }
+    .street-bar    { height: 100%; background: #FF6B00; border-radius: 2px; }
+    .street-val    { font-size: 0.72rem; color: #FF6B00; font-weight: 700; flex-shrink: 0; }
     #streets-export {
       display: block; width: 100%; margin-top: 10px;
       padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
-      border-radius: 5px; color: #2dd4a0; font-size: 0.72rem; font-weight: 600;
+      border-radius: 5px; color: #FF6B00; font-size: 0.72rem; font-weight: 600;
       text-align: center; cursor: pointer; transition: all 0.15s;
     }
-    #streets-export:hover { background: #0d2a22; border-color: #2dd4a0; }
+    #streets-export:hover { background: #2a1500; border-color: #FF6B00; }
     #rankings-export {
       display: block; width: 100%; margin-top: 10px;
       padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
@@ -874,14 +874,15 @@ function initAllLayers() {
 
   if (allData)    { initPointsLayers(); initHexLayer(); }
   if (streetData) { initStreetLayers(); }
+  initMunioBoundaryLayer();
   applyAllFilters();
   setView(currentView);
 }
 
 // ── Style switcher ─────────────────────────────────────────────────────────
 // IDs of our custom sources and layers — everything that isn't part of the basemap.
-const _CUSTOM_SOURCES = ['points', 'hexbins', 'streets'];
-const _CUSTOM_LAYERS  = ['heatmap', 'points-circle', 'hex-extrusion', 'streets-line', 'streets-ranked', 'streets-highlight'];
+const _CUSTOM_SOURCES = ['points', 'hexbins', 'streets', 'municipio-boundary'];
+const _CUSTOM_LAYERS  = ['heatmap', 'points-circle', 'hex-extrusion', 'streets-line', 'streets-ranked', 'streets-highlight', 'municipio-fill', 'municipio-outline'];
 
 function setMapStyle(styleKey) {
   currentStyle = styleKey;
@@ -1012,13 +1013,15 @@ function initStreetLayers() {
       'line-opacity': 0.9
     }
   });
-  // Ranked streets highlight — drawn on top in panel green, filtered dynamically
+  // Ranked streets highlight — drawn on top in vivid orange (#FF6B00).
+  // Chosen for high contrast on both dark and light basemaps, clearly
+  // distinct from the red infraction palette and basemap road colours.
   map.addLayer({
     id: 'streets-ranked', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
     paint: {
-      'line-color': '#2dd4a0',
-      'line-width': ['interpolate', ['linear'], ['get', 'count'], 1, 2.5, 10, 4, 50, 6, 200, 10],
+      'line-color': '#FF6B00',
+      'line-width': ['interpolate', ['linear'], ['get', 'count'], 1, 3, 10, 5, 50, 7, 200, 11],
       'line-opacity': 1
     },
     filter: ['in', 'street_name', '']   // empty by default — nothing highlighted
@@ -1063,6 +1066,7 @@ function setView(view) {
   document.getElementById('legend').style.display = view === 'streets' ? 'block' : 'none';
   if (view !== 'streets') {
     closePanel();
+    hideMunicioBoundary();
     // Clear street ranking highlights when leaving streets view
     if (map.getLayer('streets-ranked'))
       map.setFilter('streets-ranked', ['in', 'street_name', '']);
@@ -1539,7 +1543,7 @@ function renderRankings() {
       ? r.value.toFixed(2)
       : r.count.toLocaleString();
     return `
-      <div class="rank-row">
+      <div class="rank-row" style="cursor:pointer" onclick="flyToMuni('${r.muni.replace(/'/g, "\\'")}')">
         <div class="rank-num">${i + 1}</div>
         <div class="rank-bar-wrap">
           <div class="rank-name" title="${r.muni}">${r.muni}</div>
@@ -1550,6 +1554,20 @@ function renderRankings() {
         </div>
       </div>`;
   }).join('');
+}
+
+function flyToMuni(muniName) {
+  // Show boundary outline
+  showMunicioBoundary(muniName);
+  // Fly to the municipality's bounding box using street cluster data
+  if (!streetClusters) return;
+  const muniClusters = streetClusters.filter(c => c.municipio === muniName);
+  if (!muniClusters.length) return;
+  const bbox = muniClusters.reduce((acc, c) => [
+    Math.min(acc[0], c.bbox[0]), Math.min(acc[1], c.bbox[1]),
+    Math.max(acc[2], c.bbox[2]), Math.max(acc[3], c.bbox[3])
+  ], [Infinity, Infinity, -Infinity, -Infinity]);
+  map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 60, duration: 800 });
 }
 
 function toggleRankings() {
@@ -1848,6 +1866,10 @@ function renderStreetRankings() {
   // Feature 1: auto-switch to street view
   if (currentView !== 'streets') setView('streets');
 
+  // Show/hide municipality boundary
+  if (muni) showMunicioBoundary(muni);
+  else hideMunicioBoundary();
+
   // Filter clusters
   let rows = streetClusters
     .filter(c => national || c.municipio === muni)
@@ -2005,6 +2027,67 @@ function exportStreetsCSV() {
   a.download = `street-rankings_${muni}_${typeFilter}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MUNICIPALITY BOUNDARY OVERLAY
+// ════════════════════════════════════════════════════════════════════════════
+
+const MUNIS_URL = 'data/municipios.geojson';
+let muniosGeoJSON = null;  // cached after first fetch
+
+async function initMunioBoundaryLayer() {
+  // Load municipios.geojson once and cache it
+  if (!muniosGeoJSON) {
+    try {
+      const r = await fetch(MUNIS_URL);
+      if (r.ok) muniosGeoJSON = await r.json();
+    } catch (_) { return; }
+  }
+  if (!muniosGeoJSON) return;
+
+  if (map.getSource('municipio-boundary')) return; // already added
+
+  map.addSource('municipio-boundary', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] }  // empty until selection
+  });
+
+  // Subtle fill so the area is visible without obscuring the map
+  map.addLayer({
+    id: 'municipio-fill', type: 'fill', source: 'municipio-boundary',
+    paint: { 'fill-color': '#ffffff', 'fill-opacity': 0.06 }
+  });
+
+  // Dashed white outline
+  map.addLayer({
+    id: 'municipio-outline', type: 'line', source: 'municipio-boundary',
+    paint: {
+      'line-color': '#ffffff',
+      'line-width': 1.5,
+      'line-dasharray': [4, 3],
+      'line-opacity': 0.6
+    }
+  });
+}
+
+function showMunicioBoundary(muniName) {
+  if (!muniosGeoJSON || !map.getSource('municipio-boundary')) return;
+  // NAME_2 is the GADM field for municipality name
+  const feat = muniosGeoJSON.features.find(f =>
+    f.properties.NAME_2 === muniName || f.properties.municipio === muniName
+  );
+  if (!feat) return;
+  map.getSource('municipio-boundary').setData({
+    type: 'FeatureCollection', features: [feat]
+  });
+}
+
+function hideMunicioBoundary() {
+  if (!map.getSource('municipio-boundary')) return;
+  map.getSource('municipio-boundary').setData({
+    type: 'FeatureCollection', features: []
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
