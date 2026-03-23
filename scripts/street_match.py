@@ -55,7 +55,7 @@ CACHE_DIR  = ROOT / 'data' / 'osm_cache'
 
 # ── Grid config ────────────────────────────────────────────────────────────
 CELL_SIZE  = 0.1    # degrees — ~10km × 10km at Portugal's latitude
-MIN_POINTS = 5      # skip cells with fewer than this many infraction points
+MIN_POINTS = 1      # skip cells with no infraction points at all
 
 # Portugal bounding box (covers mainland + Azores + Madeira)
 PT_LAT_MIN, PT_LAT_MAX = 29.0, 43.0
@@ -329,12 +329,15 @@ def build_features(edges_proj: gpd.GeoDataFrame, agg: dict, munis: 'gpd.GeoDataF
     # Convert back to WGS84 for the output GeoJSON.
     edges_wgs = edges_proj.to_crs("EPSG:4326")
 
-    # Spatial join: tag each edge with its municipality using midpoint
+    # Spatial join: tag each edge with its municipality using midpoint.
+    # Midpoints are computed in the projected CRS (edges_proj) where interpolate
+    # is geometrically correct, then converted to WGS84 for the spatial join.
     muni_by_edge = {}
     if munis is not None:
         try:
-            mids = edges_wgs.copy()
-            mids['geometry'] = edges_wgs.geometry.interpolate(0.5, normalized=True)
+            mids = edges_proj.copy()
+            mids['geometry'] = edges_proj.geometry.interpolate(0.5, normalized=True)
+            mids = mids.to_crs("EPSG:4326")
             joined = gpd.sjoin(mids[['geometry']], munis, how='left', predicate='within')
             muni_by_edge = joined['municipio'].to_dict()
         except Exception as e:
