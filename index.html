@@ -1918,9 +1918,10 @@ function initStreetRankings() {
   // Build segment objects from streetData features
   // Skip unnamed streets (name is null/empty) — they can't meaningfully rank
   const segments = streetData.features
-    .filter(f => f.properties.street_name && f.properties.municipio)
-    .map((f, i) => ({
-      featureIdx:    i,   // index in streetData.features — used for ID-based map filter
+    .map((f, originalIdx) => ({ f, originalIdx }))
+    .filter(({ f }) => f.properties.street_name && f.properties.municipio)
+    .map(({ f, originalIdx }) => ({
+      featureIdx:    originalIdx,  // index in full streetData.features = MapLibre generateId ID
       name:          f.properties.street_name,
       municipio:     f.properties.municipio,
       count:         f.properties.count || 0,
