@@ -2115,7 +2115,10 @@ function openPanelFromCluster(cl, bbox) {
   document.getElementById('osm-link').href =
     `https://www.openstreetmap.org/#map=18/${lat.toFixed(6)}/${lon.toFixed(6)}`;
 
-  // Highlight exactly the segments in this cluster using their feature IDs
+  // Highlight all cluster segments:
+  // - streets-ranked stays set to the full top-20 list (already set by renderStreetRankings)
+  // - streets-highlight (white) is set to this cluster's segments so they
+  //   stand out the same way as a direct map click
   if (map.getLayer('streets-highlight'))
     map.setFilter('streets-highlight', ['in', ['id'], ['literal', cl.featureIds || []]]);
 
@@ -2311,9 +2314,7 @@ map.on('click', 'streets-line', e => {
   const p      = feat.properties;
   const lngLat = e.lngLat;
 
-  // generateId: true on the source means feat.id is always a valid integer,
-  // so we can highlight exactly the one segment clicked — not all segments
-  // sharing the same name+municipio.
+  // Highlight exactly the one segment clicked
   if (map.getLayer('streets-highlight'))
     map.setFilter('streets-highlight', ['==', ['id'], feat.id]);
 
@@ -2322,8 +2323,12 @@ map.on('click', 'streets-line', e => {
   const sorted = Object.entries(breakdown).sort((a,b) => b[1]-a[1]);
   const max    = sorted.length ? sorted[0][1] : 1;
 
+  // Use monthly_breakdown to show period-filtered count
+  const periodCount = countInPeriod(p.monthly_breakdown || '{}');
+  const displayCount = periodCount > 0 ? periodCount : p.count;
+
   document.getElementById('panel-street-name').textContent = p.street_name || t('panel_unnamed');
-  document.getElementById('panel-total').innerHTML         = T[lang].panel_total(p.count);
+  document.getElementById('panel-total').innerHTML         = T[lang].panel_total(displayCount);
   document.getElementById('panel-meta').textContent        =
     (p.first_year && p.last_year)
       ? `${t('panel_active')} ${T[lang].panel_years(p.first_year, p.last_year)}` : '';
