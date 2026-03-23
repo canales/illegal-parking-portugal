@@ -183,7 +183,21 @@ def get_network(clat: float, clon: float, refresh: bool) -> Optional[gpd.GeoData
         try:
             G     = ox.graph_from_bbox(bbox=ox_bbox, network_type='drive', simplify=True)
             edges = ox.graph_to_gdfs(G, nodes=False)
-            print(f"{len(edges)} edges.")
+
+            # Deduplicate bidirectional edges.
+            # OSM/osmnx represents two-way roads as two directed edges — one per
+            # direction of travel — with identical geometry but reversed node order.
+            # This causes the same physical street segment to appear twice in the
+            # GeoDataFrame, doubling infraction counts when reports are snapped to it.
+            # We deduplicate by treating each edge as an unordered pair of its
+            # start and end coordinates (a frozenset), keeping only one direction.
+            edges = edges.reset_index(drop=True)
+            edges['_edge_key'] = edges.geometry.apply(
+                lambda g: frozenset([g.coords[0], g.coords[-1]])
+            )
+            edges = edges.drop_duplicates(subset='_edge_key').drop(columns='_edge_key')
+            edges = edges.reset_index(drop=True)
+            print(f"{len(edges)} edges (after dedup).")
 
             # Save to cache
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
