@@ -1288,6 +1288,7 @@ function applyAllFilters() {
     muniStats = buildMunicipalityStats(filtered);
     renderRankings();
   }
+  if (streetClusters !== null) renderStreetRankings();
 }
 
 function renderUpdateBadge() {
@@ -1866,13 +1867,20 @@ function clusterStreets(segments) {
       clusterMap[root] = {
         name: seg.name, municipio: seg.municipio,
         count: 0, bbox: [Infinity, Infinity, -Infinity, -Infinity],
-        typeBreakdown: {},
-        featureIds: []   // MapLibre feature IDs of segments in this cluster
+        typeBreakdown: {}, monthlyBreakdown: {},
+        featureIds: []
       };
     }
     const c = clusterMap[root];
     c.count += seg.count;
-    c.featureIds.push(seg.featureIdx);  // track which features belong here
+    c.featureIds.push(seg.featureIdx);
+    // Merge monthly breakdown
+    try {
+      const mb = JSON.parse(seg.monthlyBreakdown || '{}');
+      Object.entries(mb).forEach(([ym, n]) => {
+        c.monthlyBreakdown[ym] = (c.monthlyBreakdown[ym] || 0) + n;
+      });
+    } catch(_) {}
     // Expand bounding box
     const coords = seg.coords;
     coords.forEach(([lon, lat]) => {
@@ -1912,6 +1920,20 @@ function clusterStreets(segments) {
 let streetClusters    = null;   // all clusters, built once from streetData
 let streetMuniList    = [];     // sorted list of municipalities with street data
 
+// ── Timeline-aware count helper ───────────────────────────────────────────
+// Sum a monthly_breakdown JSON string for the currently selected time window.
+// Used by street rankings and the street popup to respect the timeline slider.
+function countInPeriod(monthlyBreakdownJson) {
+  if (!monthlyBreakdownJson || !months.length) return 0;
+  let bd;
+  try { bd = JSON.parse(monthlyBreakdownJson); } catch(_) { return 0; }
+  const start = months[startMonthIdx];
+  const end   = months[endMonthIdx];
+  return Object.entries(bd).reduce((sum, [ym, n]) => {
+    return (ym >= start && ym <= end) ? sum + n : sum;
+  }, 0);
+}
+
 function initStreetRankings() {
   if (!streetData) return;
 
@@ -1921,13 +1943,14 @@ function initStreetRankings() {
     .map((f, originalIdx) => ({ f, originalIdx }))
     .filter(({ f }) => f.properties.street_name && f.properties.municipio)
     .map(({ f, originalIdx }) => ({
-      featureIdx:    originalIdx,  // index in full streetData.features = MapLibre generateId ID
-      name:          f.properties.street_name,
-      municipio:     f.properties.municipio,
-      count:         f.properties.count || 0,
-      mid:           segmentMidpoint(f.geometry.coordinates),
-      coords:        f.geometry.coordinates,
-      typeBreakdown: (() => { try { return JSON.parse(f.properties.type_breakdown || '{}'); } catch(_) { return {}; } })()
+      featureIdx:       originalIdx,
+      name:             f.properties.street_name,
+      municipio:        f.properties.municipio,
+      count:            f.properties.count || 0,
+      mid:              segmentMidpoint(f.geometry.coordinates),
+      coords:           f.geometry.coordinates,
+      monthlyBreakdown: f.properties.monthly_breakdown || '{}',
+      typeBreakdown:    (() => { try { return JSON.parse(f.properties.type_breakdown || '{}'); } catch(_) { return {}; } })()
     }));
 
   streetClusters = clusterStreets(segments);
@@ -1974,9 +1997,11 @@ function renderStreetRankings() {
   let rows = streetClusters
     .filter(c => national || c.municipio === muni)
     .map(c => {
+      // Use monthly_breakdown to respect the timeline slider
+      const periodCount = countInPeriod(JSON.stringify(c.monthlyBreakdown));
       const count = typeFilter === 'all'
-        ? c.count
-        : (c.typeBreakdown[typeFilter] || 0);
+        ? periodCount
+        : Math.min(periodCount, (c.typeBreakdown[typeFilter] || 0));
       return { ...c, filteredCount: count };
     })
     .filter(r => r.filteredCount > 0)
@@ -2059,8 +2084,13 @@ function openPanelFromCluster(cl, bbox) {
   const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
   const max    = sorted.length ? sorted[0][1] : 1;
 
+  // Use monthly_breakdown to show count for the selected time period
+  const periodCount = countInPeriod(JSON.stringify(cl.monthlyBreakdown || {}));
+  const displayCount = (cl.monthlyBreakdown && Object.keys(cl.monthlyBreakdown).length)
+    ? periodCount : cl.count;
+
   document.getElementById('panel-street-name').textContent = cl.name;
-  document.getElementById('panel-total').innerHTML         = T[lang].panel_total(cl.count);
+  document.getElementById('panel-total').innerHTML         = T[lang].panel_total(displayCount);
   document.getElementById('panel-meta').textContent        =
     (cl.first_year && cl.last_year)
       ? `${t('panel_active')} ${T[lang].panel_years(cl.first_year, cl.last_year)}` : '';

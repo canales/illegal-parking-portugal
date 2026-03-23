@@ -133,7 +133,8 @@ def load_infractions() -> pd.DataFrame:
         rows.append({
             'lat': lat, 'lon': lon,
             'infraction_type': p.get('infraction_type', ''),
-            'year': p.get('data_data', '')[:4]
+            'year':  p.get('data_data', '')[:4],
+            'month': p.get('data_data', '')[:7]   # YYYY-MM for monthly breakdown
         })
     df = pd.DataFrame(rows)
     print(f"Loaded {len(df)} infraction points (within Portugal bbox).")
@@ -293,14 +294,16 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: flo
 
     agg = {}
     for edge_idx, group in snapped.groupby('edge_idx'):
-        types = group['infraction_type'].tolist()
-        years = [y for y in group['year'].tolist() if len(y) == 4 and y.isdigit()]
+        types  = group['infraction_type'].tolist()
+        years  = [y for y in group['year'].tolist() if len(y) == 4 and y.isdigit()]
+        months = [m for m in group['month'].tolist() if len(m) == 7]
         agg[int(edge_idx)] = {
-            'count':          len(group),
-            'top_infraction': Counter(types).most_common(1)[0][0],
-            'first_year':     min(years) if years else None,
-            'last_year':      max(years) if years else None,
-            'type_breakdown': dict(Counter(types))
+            'count':             len(group),
+            'top_infraction':    Counter(types).most_common(1)[0][0],
+            'first_year':        min(years) if years else None,
+            'last_year':         max(years) if years else None,
+            'type_breakdown':    dict(Counter(types)),
+            'monthly_breakdown': dict(Counter(months))
         }
 
     return agg, len(snapped), edges_proj  # return edges_proj so build_features uses same index
@@ -353,13 +356,14 @@ def build_features(edges_proj: gpd.GeoDataFrame, agg: dict, munis: 'gpd.GeoDataF
                 "type": "Feature",
                 "geometry": geom.__geo_interface__,
                 "properties": {
-                    "street_name":    name,
-                    "municipio":      muni,
-                    "count":          stats['count'],
-                    "top_infraction": stats['top_infraction'],
-                    "first_year":     stats['first_year'],
-                    "last_year":      stats['last_year'],
-                    "type_breakdown": json.dumps(stats['type_breakdown'])
+                    "street_name":       name,
+                    "municipio":         muni,
+                    "count":             stats['count'],
+                    "top_infraction":    stats['top_infraction'],
+                    "first_year":        stats['first_year'],
+                    "last_year":         stats['last_year'],
+                    "type_breakdown":    json.dumps(stats['type_breakdown']),
+                    "monthly_breakdown": json.dumps(stats['monthly_breakdown'])
                 }
             })
         except Exception:
