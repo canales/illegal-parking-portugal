@@ -1633,7 +1633,30 @@ function renderRankings() {
 function flyToMuni(muniName) {
   // Show boundary outline
   showMunicioBoundary(muniName);
-  // Fly to the municipality's bounding box using street cluster data
+
+  // Use the municipio polygon bbox for a consistent zoom regardless of
+  // where reports are concentrated — otherwise per-km view zooms to only
+  // the streets with reports rather than the full municipality area.
+  if (muniosGeoJSON) {
+    const feat = muniosGeoJSON.features.find(f =>
+      f.properties.NAME_2 === muniName || f.properties.municipio === muniName
+    );
+    if (feat) {
+      // Compute bbox from polygon coordinates
+      const coords = feat.geometry.type === 'MultiPolygon'
+        ? feat.geometry.coordinates.flat(2)
+        : feat.geometry.coordinates.flat(1);
+      const bbox = coords.reduce((acc, [lon, lat]) => [
+        Math.min(acc[0], lon), Math.min(acc[1], lat),
+        Math.max(acc[2], lon), Math.max(acc[3], lat)
+      ], [Infinity, Infinity, -Infinity, -Infinity]);
+      map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
+        { padding: 120, duration: 800 });
+      return;
+    }
+  }
+
+  // Fallback: use street cluster bbox if municipio polygon not available
   if (!streetClusters) return;
   const muniClusters = streetClusters.filter(c => c.municipio === muniName);
   if (!muniClusters.length) return;
@@ -1641,7 +1664,8 @@ function flyToMuni(muniName) {
     Math.min(acc[0], c.bbox[0]), Math.min(acc[1], c.bbox[1]),
     Math.max(acc[2], c.bbox[2]), Math.max(acc[3], c.bbox[3])
   ], [Infinity, Infinity, -Infinity, -Infinity]);
-  map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 60, duration: 800 });
+  map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
+    { padding: 120, duration: 800 });
 }
 
 function toggleRankings() {
