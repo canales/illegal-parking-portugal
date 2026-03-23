@@ -2049,6 +2049,8 @@ function renderStreetRankings() {
     const clJson   = JSON.stringify({
       name: r.displayName, municipio: r.municipio,
       count: r.filteredCount, typeBreakdown: r.typeBreakdown,
+      monthlyBreakdown: r.monthlyBreakdown || {},
+      featureIds: r.featureIds || [],
       first_year: r.first_year || null, last_year: r.last_year || null
     }).replace(/"/g, '&quot;');
     return `
