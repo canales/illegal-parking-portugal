@@ -470,9 +470,9 @@
   <label>
     <span data-i18n="view_label">View:</span>
     <div class="layer-toggle">
-      <button class="toggle-btn active" id="btn-heat"    onclick="setView('heat')"    data-i18n="view_heat">Heatmap</button>
+      <button class="toggle-btn"        id="btn-heat"    onclick="setView('heat')"    data-i18n="view_heat">Heatmap</button>
       <button class="toggle-btn"        id="btn-hex"     onclick="setView('hex')"     data-i18n="view_hex">3D Hexagons</button>
-      <button class="toggle-btn"        id="btn-streets" onclick="setView('streets')" data-i18n="view_streets">By street</button>
+      <button class="toggle-btn active" id="btn-streets" onclick="setView('streets')" data-i18n="view_streets">By street</button>
       <button class="toggle-btn"        id="btn-points"  onclick="setView('points')"  data-i18n="view_points">Points</button>
     </div>
   </label>
@@ -820,7 +820,7 @@ let currentStyle = 'dark-matter';
 let lang          = 'en';
 let allData       = null;     // full GeoJSON from file
 let streetData    = null;
-let currentView   = 'heat';
+let currentView   = 'streets';
 let currentType   = 'all';
 let typeList      = [];
 let months        = [];       // sorted array of 'YYYY-MM' strings
