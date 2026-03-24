@@ -34,6 +34,7 @@ Usage
 """
 
 import os
+import re
 import json
 import time
 import math
@@ -359,6 +360,10 @@ def load_municipios() -> 'gpd.GeoDataFrame | None':
         return None
     try:
         munis = gpd.read_file(str(munis_path))[['geometry', 'NAME_2']].copy()
+        # GADM NAME_2 has no spaces — insert space before each capital following lowercase
+        munis['NAME_2'] = munis['NAME_2'].apply(
+            lambda n: re.sub(r'(?<=[a-záàâãéèêíóôõúç])([A-ZÁÀÂÃÉÈÊÍÓÔÕÚÇ])', r' \1', n) if isinstance(n, str) else n
+        )
         munis = munis.rename(columns={'NAME_2': 'municipio'})
         return munis.to_crs("EPSG:4326")
     except Exception as e:
