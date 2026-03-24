@@ -916,7 +916,7 @@ map.on('load', async () => {
 
   initAllLayers();
   updateStats();
-  if (allData) initRankings();
+  if (allData) await initRankings();
   if (streetData) initStreetRankings();
 
   // Render update badge if stats.json loaded successfully
@@ -1529,41 +1529,31 @@ function buildMunicipalityStats(features) {
 // Compute total road length (km) per municipality from streetData geometries.
 // Reads the `municipio` property tagged by street_match.py — no proximity
 // guessing needed, so values are accurate.
-function computeRoadLengthPerMunicipality() {
-  if (!streetData) return {};
-  const lengths = {};
-
-  function haversine([lon1, lat1], [lon2, lat2]) {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2)**2 +
-              Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  }
-
-  streetData.features.forEach(f => {
-    const muni = f.properties.municipio;
-    if (!muni) return;
-    const coords = f.geometry.coordinates;
-    if (!coords || coords.length < 2) return;
-    let segLen = 0;
-    for (let i = 0; i < coords.length - 1; i++) {
-      segLen += haversine(coords[i], coords[i+1]);
-    }
-    lengths[muni] = (lengths[muni] || 0) + segLen;
-  });
-
-  return lengths;
-}
+const ROAD_LENGTHS_URL = 'data/road_network_lengths.json';
 
 let rankMode          = 'total';
 let muniStats         = null;
 let muniRoadLengths   = null;
 
-function initRankings() {
-  muniStats       = buildMunicipalityStats();
-  muniRoadLengths = computeRoadLengthPerMunicipality();
+async function initRankings() {
+  muniStats = buildMunicipalityStats();
+
+  // Load full OSM road network lengths from pipeline-generated file.
+  // This uses ALL road segments per municipality (not just matched ones),
+  // giving an accurate denominator for per-km-road rankings.
+  // Falls back to matched-streets-only computation if file not yet available.
+  try {
+    const r = await fetch(ROAD_LENGTHS_URL);
+    if (r.ok) {
+      muniRoadLengths = await r.json();
+      console.log(`Road lengths loaded from ${ROAD_LENGTHS_URL} (${Object.keys(muniRoadLengths).length} municipalities)`);
+    } else {
+      throw new Error('not found');
+    }
+  } catch (_) {
+    console.warn('road_network_lengths.json not available — falling back to matched-streets lengths');
+    muniRoadLengths = computeRoadLengthFromStreets();
+  }
 
   // Populate infraction type filter inside rankings — sorted by total count
   // descending with counts shown, matching the main infraction dropdown
@@ -1582,6 +1572,30 @@ function initRankings() {
 
   positionRankingsPanel();
   renderRankings();
+}
+
+// Fallback: compute road lengths from matched streets only (less accurate)
+function computeRoadLengthFromStreets() {
+  if (!streetData) return {};
+  const lengths = {};
+  function haversine([lon1, lat1], [lon2, lat2]) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+  streetData.features.forEach(f => {
+    const muni = f.properties.municipio;
+    if (!muni) return;
+    const coords = f.geometry.coordinates;
+    if (!coords || coords.length < 2) return;
+    let segLen = 0;
+    for (let i = 0; i < coords.length - 1; i++) segLen += haversine(coords[i], coords[i+1]);
+    lengths[muni] = (lengths[muni] || 0) + segLen;
+  });
+  return lengths;
 }
 
 function setRankMode(mode) {
