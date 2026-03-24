@@ -51,6 +51,7 @@ import pandas as pd
 ROOT       = Path(__file__).resolve().parent.parent
 IN_PATH    = ROOT / 'data' / 'infractions.geojson'
 OUT_PATH   = ROOT / 'data' / 'streets_matched.geojson'
+ROAD_LENGTHS_PATH = ROOT / 'data' / 'road_network_lengths.json'
 CACHE_DIR  = ROOT / 'data' / 'osm_cache'
 
 # ── Grid config ────────────────────────────────────────────────────────────
@@ -309,6 +310,47 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: flo
     return agg, len(snapped), edges_proj  # return edges_proj so build_features uses same index
 
 
+def accumulate_road_lengths(edges_proj: gpd.GeoDataFrame,
+                            munis: 'gpd.GeoDataFrame | None',
+                            road_km_acc: dict) -> None:
+    """
+    Accumulate total road network length (km) per municipality from ALL edges
+    in the cell — not just matched ones. This gives the correct denominator
+    for per-km-road rankings.
+
+    Uses the projected CRS (edges_proj) for accurate metric length calculation,
+    then joins edge midpoints to municipality polygons to assign each edge to
+    a municipality.
+
+    Results are accumulated in-place into road_km_acc: {municipio: km}.
+    """
+    if munis is None:
+        return
+    try:
+        # Compute length of each edge in metres (projected CRS is metric)
+        edges_proj = edges_proj.reset_index(drop=True).copy()
+        edges_proj['_len_m'] = edges_proj.geometry.length
+
+        # Compute midpoints in projected CRS for spatial join
+        mids = edges_proj.copy()
+        mids['geometry'] = edges_proj.geometry.interpolate(0.5, normalized=True)
+        mids_wgs = mids[['geometry', '_len_m']].to_crs('EPSG:4326')
+
+        # Join midpoints to municipality polygons
+        joined = gpd.sjoin(mids_wgs, munis[['geometry', 'municipio']],
+                           how='left', predicate='within')
+
+        # Accumulate km per municipality
+        for _, row in joined.iterrows():
+            muni = row.get('municipio')
+            if not isinstance(muni, str):
+                continue
+            road_km_acc[muni] = road_km_acc.get(muni, 0) + row['_len_m'] / 1000
+
+    except Exception as e:
+        print(f"    ⚠  road length accumulation failed ({e})")
+
+
 def load_municipios() -> 'gpd.GeoDataFrame | None':
     """Load municipality boundaries for spatial join. Returns None if missing."""
     munis_path = ROOT / 'data' / 'municipios.geojson'
@@ -400,6 +442,7 @@ def main():
         print("⚠  Cache refresh mode — all cells will be re-fetched from Overpass.")
 
     all_features = []
+    road_km_acc  = {}   # {municipio: total_km} — accumulates across all cells
     succeeded = skipped = cached_hits = 0
     cells_list = sorted(grid.items())  # sorted for deterministic order
 
@@ -420,6 +463,11 @@ def main():
         agg, snapped, edges_proj = snap_and_aggregate(df_cell, edges, clon)
         features = build_features(edges_proj, agg, munis)
         all_features.extend(features)
+
+        # Accumulate total road network length for ALL edges in this cell
+        # (not just matched ones) — used for accurate per-km-road rankings
+        accumulate_road_lengths(edges_proj, munis, road_km_acc)
+
         print(f"  {snapped}/{len(df_cell)} snapped → {len(features)} segments")
         succeeded += 1
         if from_cache:
@@ -442,6 +490,13 @@ def main():
 
     size_kb = OUT_PATH.stat().st_size / 1024
     print(f"✓ Saved → {OUT_PATH} ({size_kb:.0f} KB)")
+
+    # Save road network lengths — {municipio: km} — used by the map for
+    # accurate per-km-road rankings using full OSM network, not just matched streets
+    road_km_rounded = {m: round(km, 3) for m, km in road_km_acc.items()}
+    with open(ROAD_LENGTHS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(road_km_rounded, f, ensure_ascii=False, indent=2)
+    print(f"✓ Saved road lengths → {ROAD_LENGTHS_PATH} ({len(road_km_rounded)} municipalities)")
 
 
 if __name__ == "__main__":
