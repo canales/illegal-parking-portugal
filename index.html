@@ -1496,20 +1496,11 @@ function closePointPopup() {
 // ════════════════════════════════════════════════════════════════════════════
 
 // Build municipality → {total, byType} aggregations from allData.
-// Uses `municipio` property (written by fetch_data.py spatial join) when
-// available. Falls back to a simple authority name parse so the rankings
-// panel is still useful before the first spatial-join run.
+// Uses `municipio` property (written by fetch_data.py spatial join).
+// Records without a municipio (outside all polygon boundaries or bad GPS)
+// are excluded from rankings — autoridade is not a reliable geographic proxy.
 function getMuni(f) {
-  if (f.properties.municipio) return f.properties.municipio;
-  // Fallback: extract city from authority string
-  const a = f.properties.autoridade || '';
-  let m = a.match(/Pol[íi]cia Municipal\s*[-–]\s*(.+)/i);
-  if (m) return m[1].trim();
-  m = a.match(/GNR\s*[-–].*\bde\s+([^-–\n]+)/i);
-  if (m) return m[1].trim();
-  m = a.match(/PSP\s*[-–]\s*([^-–]+)/i);
-  if (m) { const c = m[1].trim(); if (c.length > 3) return c; }
-  return null;
+  return f.properties.municipio || null;
 }
 
 function buildMunicipalityStats(features) {
@@ -1644,6 +1635,12 @@ function renderRankings() {
   }).join('');
 }
 
+function normalizeMuniName(name) {
+  // GADM NAME_2 field has no spaces between words (e.g. "MarinhaGrande").
+  // Normalize both sides by removing spaces and lowercasing for comparison.
+  return name.replace(/\s+/g, '').toLowerCase();
+}
+
 function flyToMuni(muniName) {
   // Show boundary outline
   showMunicioBoundary(muniName);
@@ -1652,11 +1649,12 @@ function flyToMuni(muniName) {
   // where reports are concentrated — otherwise per-km view zooms to only
   // the streets with reports rather than the full municipality area.
   if (muniosGeoJSON) {
-    const feat = muniosGeoJSON.features.find(f =>
-      f.properties.NAME_2 === muniName || f.properties.municipio === muniName
-    );
+    const norm = normalizeMuniName(muniName);
+    const feat = muniosGeoJSON.features.find(f => {
+      const n2 = f.properties.NAME_2 || f.properties.municipio || '';
+      return normalizeMuniName(n2) === norm;
+    });
     if (feat) {
-      // Compute bbox from polygon coordinates
       const coords = feat.geometry.type === 'MultiPolygon'
         ? feat.geometry.coordinates.flat(2)
         : feat.geometry.coordinates.flat(1);
@@ -1668,6 +1666,8 @@ function flyToMuni(muniName) {
         { padding: 120, duration: 800 });
       return;
     }
+    // No match found — parish or combined name, skip fly-to silently
+    console.warn(`flyToMuni: no GADM polygon found for "${muniName}"`);
   }
 
   // Fallback: use street cluster bbox if municipio polygon not available
@@ -2257,10 +2257,11 @@ async function initMunioBoundaryLayer() {
 
 function showMunicioBoundary(muniName) {
   if (!muniosGeoJSON || !map.getSource('municipio-boundary')) return;
-  // NAME_2 is the GADM field for municipality name
-  const feat = muniosGeoJSON.features.find(f =>
-    f.properties.NAME_2 === muniName || f.properties.municipio === muniName
-  );
+  const norm = normalizeMuniName(muniName);
+  const feat = muniosGeoJSON.features.find(f => {
+    const n2 = f.properties.NAME_2 || f.properties.municipio || '';
+    return normalizeMuniName(n2) === norm;
+  });
   if (!feat) return;
   map.getSource('municipio-boundary').setData({
     type: 'FeatureCollection', features: [feat]
