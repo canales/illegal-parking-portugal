@@ -84,7 +84,13 @@ def assign_municipios(features: list) -> list:
 
     print("Assigning municipalities via spatial join...")
 
+    import re
     munis = gpd.read_file(MUNIS_PATH)[['geometry', 'NAME_2']].copy()
+    # GADM NAME_2 field has no spaces (e.g. "MarinhaGrande").
+    # Insert a space before each capital letter that follows a lowercase letter.
+    munis['NAME_2'] = munis['NAME_2'].apply(
+        lambda n: re.sub(r'(?<=[a-záàâãéèêíóôõúç])([A-ZÁÀÂÃÉÈÊÍÓÔÕÚÇ])', r' \1', n) if isinstance(n, str) else n
+    )
     munis = munis.rename(columns={'NAME_2': 'municipio'})
     munis = munis.to_crs("EPSG:4326")
 
