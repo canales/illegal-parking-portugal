@@ -824,6 +824,9 @@ let allData       = null;     // full GeoJSON from file
 let streetData    = null;
 let currentView   = 'streets';
 let currentType   = 'all';
+let _activeCluster = null;   // last cluster opened in the detail panel
+let _activeBbox    = null;   // bbox of last opened cluster
+let _activeSegProp = null;   // properties of last map-clicked segment
 let typeList      = [];
 let months        = [];       // sorted array of 'YYYY-MM' strings
 let startMonthIdx = 0;        // left handle
@@ -1291,6 +1294,23 @@ function applyAllFilters() {
     renderRankings();
   }
   if (streetClusters !== null) renderStreetRankings();
+
+  // If the street detail panel is open, re-render it with the new period
+  if (document.getElementById('street-panel').classList.contains('open')) {
+    if (_activeCluster && _activeBbox) {
+      openPanelFromCluster(_activeCluster, _activeBbox);
+    } else if (_activeSegProp) {
+      // Re-render segment panel — update total and meta, keep other fields
+      const periodCount  = countInPeriod(_activeSegProp.monthly_breakdown || '{}');
+      const displayCount = periodCount > 0 ? periodCount : _activeSegProp.count;
+      const periodStart  = months.length ? months[startMonthIdx].substring(0, 4) : null;
+      const periodEnd    = months.length ? months[endMonthIdx].substring(0, 4)   : null;
+      document.getElementById('panel-total').innerHTML   = T[lang].panel_total(displayCount);
+      document.getElementById('panel-meta').textContent  = (periodStart && periodEnd)
+        ? `${t('panel_active')} ${T[lang].panel_years(periodStart, periodEnd)}` : '';
+      updateBreakdownLabel();
+    }
+  }
 }
 
 function renderUpdateBadge() {
@@ -2136,6 +2156,11 @@ function flyToStreet(bbox, clusterData) {
 
 // Open the right-side street panel from a ranking cluster (no map click needed)
 function openPanelFromCluster(cl, bbox) {
+  // Store active cluster so slider changes can re-render the panel
+  _activeCluster = cl;
+  _activeBbox    = bbox;
+  _activeSegProp = null;
+
   const breakdown = typeof cl.typeBreakdown === 'string'
     ? JSON.parse(cl.typeBreakdown) : cl.typeBreakdown;
   const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
@@ -2146,11 +2171,14 @@ function openPanelFromCluster(cl, bbox) {
   const displayCount = (cl.monthlyBreakdown && Object.keys(cl.monthlyBreakdown).length)
     ? periodCount : cl.count;
 
+  // Show selected period dates, not all-time first/last year
+  const periodStart = months.length ? months[startMonthIdx].substring(0, 4) : null;
+  const periodEnd   = months.length ? months[endMonthIdx].substring(0, 4)   : null;
+
   document.getElementById('panel-street-name').textContent = cl.name;
   document.getElementById('panel-total').innerHTML         = T[lang].panel_total(displayCount);
-  document.getElementById('panel-meta').textContent        =
-    (cl.first_year && cl.last_year)
-      ? `${t('panel_active')} ${T[lang].panel_years(cl.first_year, cl.last_year)}` : '';
+  document.getElementById('panel-meta').textContent        = (periodStart && periodEnd)
+    ? `${t('panel_active')} ${T[lang].panel_years(periodStart, periodEnd)}` : '';
 
   document.getElementById('breakdown-chart').innerHTML = sorted.map(([type, count]) => `
     <div class="breakdown-row">
@@ -2172,10 +2200,6 @@ function openPanelFromCluster(cl, bbox) {
   document.getElementById('osm-link').href =
     `https://www.openstreetmap.org/#map=18/${lat.toFixed(6)}/${lon.toFixed(6)}`;
 
-  // Highlight all cluster segments:
-  // - streets-ranked stays set to the full top-20 list (already set by renderStreetRankings)
-  // - streets-highlight (white) is set to this cluster's segments so they
-  //   stand out the same way as a direct map click
   if (map.getLayer('streets-highlight'))
     map.setFilter('streets-highlight', ['in', ['id'], ['literal', cl.featureIds || []]]);
 
@@ -2382,15 +2406,23 @@ map.on('click', 'streets-line', e => {
   const sorted = Object.entries(breakdown).sort((a,b) => b[1]-a[1]);
   const max    = sorted.length ? sorted[0][1] : 1;
 
+  // Store active segment so slider changes can re-render the panel
+  _activeSegProp = p;
+  _activeCluster = null;
+  _activeBbox    = null;
+
   // Use monthly_breakdown to show period-filtered count
   const periodCount = countInPeriod(p.monthly_breakdown || '{}');
   const displayCount = periodCount > 0 ? periodCount : p.count;
 
+  // Show selected period dates, not all-time first/last year
+  const periodStart = months.length ? months[startMonthIdx].substring(0, 4) : null;
+  const periodEnd   = months.length ? months[endMonthIdx].substring(0, 4)   : null;
+
   document.getElementById('panel-street-name').textContent = p.street_name || t('panel_unnamed');
   document.getElementById('panel-total').innerHTML         = T[lang].panel_total(displayCount);
-  document.getElementById('panel-meta').textContent        =
-    (p.first_year && p.last_year)
-      ? `${t('panel_active')} ${T[lang].panel_years(p.first_year, p.last_year)}` : '';
+  document.getElementById('panel-meta').textContent        = (periodStart && periodEnd)
+    ? `${t('panel_active')} ${T[lang].panel_years(periodStart, periodEnd)}` : '';
 
   document.getElementById('breakdown-chart').innerHTML = sorted.map(([type, count]) => `
     <div class="breakdown-row">
@@ -2429,6 +2461,9 @@ function openPanel()  { document.getElementById('street-panel').classList.add('o
 function closePanel() {
   document.getElementById('street-panel').classList.remove('open');
   if (map.getLayer('streets-highlight')) map.setFilter('streets-highlight', ['==', ['id'], -1]);
+  _activeCluster = null;
+  _activeBbox    = null;
+  _activeSegProp = null;
 }
 </script>
 </body>
