@@ -628,6 +628,8 @@ const T = {
     panel_total:     (n) => `<strong>${n}</strong> reports on this street`,
     panel_years:     (f, l) => f === l ? f : `${f}–${l}`,
     panel_active:    'Active:',
+    panel_dates:     'Dates:',
+    panel_month:     ym => { const [y,m] = ym.split('-'); return new Date(y,m-1).toLocaleDateString('en-GB',{month:'short',year:'numeric'}); },
     panel_unnamed:   'Unnamed street',
     legend_title:    'Reports per street',
     source_label:    'Source:',
@@ -674,6 +676,8 @@ const T = {
     panel_total:     (n) => `<strong>${n}</strong> denúncias nesta rua`,
     panel_years:     (f, l) => f === l ? f : `${f}–${l}`,
     panel_active:    'Ativo:',
+    panel_dates:     'Datas:',
+    panel_month:     ym => { const [y,m] = ym.split('-'); return new Date(y,m-1).toLocaleDateString('pt-PT',{month:'short',year:'numeric'}); },
     panel_unnamed:   'Rua sem nome',
     legend_title:    'Denúncias por rua',
     source_label:    'Fonte:',
@@ -1282,13 +1286,16 @@ function applyAllFilters() {
 
   if (map.getSource('points'))  map.getSource('points').setData(fc);
   if (map.getSource('hexbins')) map.getSource('hexbins').setData(computeHexbins(filtered));
-  if (map.getLayer('streets-line'))
-    map.setFilter('streets-line', currentType === 'all' ? null : ['==', ['get', 'top_infraction'], currentType]);
+
+  // Rebuild streets source with period-filtered counts so colors reflect
+  // the selected time window, not all-time totals
+  if (map.getSource('streets') && streetData) {
+    map.getSource('streets').setData(buildFilteredStreetsData());
+  }
 
   updateFilterCounts(filtered);
   setTimeout(updateViewportStats, 100);
   updateStats(filtered.length);
-  // Keep city rankings in sync with timeline and type filter
   if (muniStats !== null) {
     muniStats = buildMunicipalityStats(filtered);
     renderRankings();
@@ -1300,17 +1307,34 @@ function applyAllFilters() {
     if (_activeCluster && _activeBbox) {
       openPanelFromCluster(_activeCluster, _activeBbox);
     } else if (_activeSegProp) {
-      // Re-render segment panel — update total and meta, keep other fields
       const periodCount  = countInPeriod(_activeSegProp.monthly_breakdown || '{}');
       const displayCount = periodCount > 0 ? periodCount : _activeSegProp.count;
-      const periodStart  = months.length ? months[startMonthIdx].substring(0, 4) : null;
-      const periodEnd    = months.length ? months[endMonthIdx].substring(0, 4)   : null;
-      document.getElementById('panel-total').innerHTML   = T[lang].panel_total(displayCount);
-      document.getElementById('panel-meta').textContent  = (periodStart && periodEnd)
-        ? `${t('panel_active')} ${T[lang].panel_years(periodStart, periodEnd)}` : '';
+      document.getElementById('panel-total').innerHTML  = T[lang].panel_total(displayCount);
+      document.getElementById('panel-meta').textContent = formatPeriodLabel();
       updateBreakdownLabel();
     }
   }
+}
+
+// Rebuild streetData with period-filtered counts from monthly_breakdown.
+// This ensures the streets-line color scale reflects the selected time window.
+function buildFilteredStreetsData() {
+  const start = months[startMonthIdx];
+  const end   = months[endMonthIdx];
+  const full  = isFullPeriod();
+  return {
+    type: 'FeatureCollection',
+    features: streetData.features.map(f => {
+      if (full) return f; // no-op for full period — use original counts
+      const mb = (() => { try { return JSON.parse(f.properties.monthly_breakdown || '{}'); } catch(_) { return {}; } })();
+      const periodCount = Object.entries(mb).reduce((s, [ym, n]) =>
+        (ym >= start && ym <= end ? s + n : s), 0);
+      return {
+        ...f,
+        properties: { ...f.properties, count: periodCount }
+      };
+    })
+  };
 }
 
 function renderUpdateBadge() {
@@ -1982,6 +2006,15 @@ let streetMuniList    = [];     // sorted list of municipalities with street dat
 
 // ── Timeline-aware count helper ───────────────────────────────────────────
 // Returns true if the current timeline selection covers the full date range
+// Returns "Dates: Jan 2020 – Mar 2026" for the current slider selection
+function formatPeriodLabel() {
+  if (!months.length) return '';
+  const s = T[lang].panel_month(months[startMonthIdx]);
+  const e = T[lang].panel_month(months[endMonthIdx]);
+  const range = s === e ? s : `${s} – ${e}`;
+  return `${t('panel_dates')} ${range}`;
+}
+
 function isFullPeriod() {
   return startMonthIdx === 0 && endMonthIdx === months.length - 1;
 }
@@ -2171,14 +2204,9 @@ function openPanelFromCluster(cl, bbox) {
   const displayCount = (cl.monthlyBreakdown && Object.keys(cl.monthlyBreakdown).length)
     ? periodCount : cl.count;
 
-  // Show selected period dates, not all-time first/last year
-  const periodStart = months.length ? months[startMonthIdx].substring(0, 4) : null;
-  const periodEnd   = months.length ? months[endMonthIdx].substring(0, 4)   : null;
-
   document.getElementById('panel-street-name').textContent = cl.name;
   document.getElementById('panel-total').innerHTML         = T[lang].panel_total(displayCount);
-  document.getElementById('panel-meta').textContent        = (periodStart && periodEnd)
-    ? `${t('panel_active')} ${T[lang].panel_years(periodStart, periodEnd)}` : '';
+  document.getElementById('panel-meta').textContent        = formatPeriodLabel();
 
   document.getElementById('breakdown-chart').innerHTML = sorted.map(([type, count]) => `
     <div class="breakdown-row">
@@ -2415,14 +2443,9 @@ map.on('click', 'streets-line', e => {
   const periodCount = countInPeriod(p.monthly_breakdown || '{}');
   const displayCount = periodCount > 0 ? periodCount : p.count;
 
-  // Show selected period dates, not all-time first/last year
-  const periodStart = months.length ? months[startMonthIdx].substring(0, 4) : null;
-  const periodEnd   = months.length ? months[endMonthIdx].substring(0, 4)   : null;
-
   document.getElementById('panel-street-name').textContent = p.street_name || t('panel_unnamed');
   document.getElementById('panel-total').innerHTML         = T[lang].panel_total(displayCount);
-  document.getElementById('panel-meta').textContent        = (periodStart && periodEnd)
-    ? `${t('panel_active')} ${T[lang].panel_years(periodStart, periodEnd)}` : '';
+  document.getElementById('panel-meta').textContent        = formatPeriodLabel();
 
   document.getElementById('breakdown-chart').innerHTML = sorted.map(([type, count]) => `
     <div class="breakdown-row">
