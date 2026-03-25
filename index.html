@@ -622,6 +622,7 @@ const T = {
     view_streets:    'By street',
     view_points:     'Points',
     panel_breakdown: 'Reports by type',
+    panel_breakdown_alltime: '(all-time)',
     panel_gsv:       'Open in Google Street View',
     panel_osm:       'View on OpenStreetMap',
     panel_total:     (n) => `<strong>${n}</strong> reports on this street`,
@@ -667,6 +668,7 @@ const T = {
     view_streets:    'Por rua',
     view_points:     'Pontos',
     panel_breakdown: 'Denúncias por tipo',
+    panel_breakdown_alltime: '(total histórico)',
     panel_gsv:       'Abrir no Google Street View',
     panel_osm:       'Ver no OpenStreetMap',
     panel_total:     (n) => `<strong>${n}</strong> denúncias nesta rua`,
@@ -1959,6 +1961,21 @@ let streetClusters    = null;   // all clusters, built once from streetData
 let streetMuniList    = [];     // sorted list of municipalities with street data
 
 // ── Timeline-aware count helper ───────────────────────────────────────────
+// Returns true if the current timeline selection covers the full date range
+function isFullPeriod() {
+  return startMonthIdx === 0 && endMonthIdx === months.length - 1;
+}
+
+// Update the breakdown section title to note when it shows all-time data
+// despite a filtered period being selected
+function updateBreakdownLabel() {
+  const el = document.querySelector('.panel-section-title[data-i18n="panel_breakdown"]');
+  if (!el) return;
+  const base = T[lang].panel_breakdown;
+  el.textContent = isFullPeriod()
+    ? base
+    : `${base} ${T[lang].panel_breakdown_alltime}`;
+}
 // Sum a monthly_breakdown JSON string for the currently selected time window.
 // Used by street rankings and the street popup to respect the timeline slider.
 function countInPeriod(monthlyBreakdownJson) {
@@ -2162,6 +2179,7 @@ function openPanelFromCluster(cl, bbox) {
   if (map.getLayer('streets-highlight'))
     map.setFilter('streets-highlight', ['in', ['id'], ['literal', cl.featureIds || []]]);
 
+  updateBreakdownLabel();
   openPanel();
 }
 
@@ -2391,6 +2409,7 @@ map.on('click', 'streets-line', e => {
   document.getElementById('osm-link').href =
     `https://www.openstreetmap.org/#map=18/${lngLat.lat.toFixed(6)}/${lngLat.lng.toFixed(6)}`;
 
+  updateBreakdownLabel();
   openPanel();
 });
 
