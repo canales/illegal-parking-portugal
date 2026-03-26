@@ -1400,16 +1400,15 @@ function buildFilteredStreetsData() {
   const full  = isFullPeriod();
   return {
     type: 'FeatureCollection',
-    features: streetData.features.map(f => {
-      if (full) return f; // no-op for full period — use original counts
-      const mb = (() => { try { return JSON.parse(f.properties.monthly_breakdown || '{}'); } catch(_) { return {}; } })();
-      const periodCount = Object.entries(mb).reduce((s, [ym, n]) =>
-        (ym >= start && ym <= end ? s + n : s), 0);
-      return {
-        ...f,
-        properties: { ...f.properties, count: periodCount }
-      };
-    })
+    features: streetData.features
+      .map(f => {
+        if (full) return f; // no-op for full period — use original counts
+        const mb = (() => { try { return JSON.parse(f.properties.monthly_breakdown || '{}'); } catch(_) { return {}; } })();
+        const periodCount = Object.entries(mb).reduce((s, [ym, n]) =>
+          (ym >= start && ym <= end ? s + n : s), 0);
+        return { ...f, properties: { ...f.properties, count: periodCount } };
+      })
+      .filter(f => f.properties.count > 0) // hide streets with no reports in selected period
   };
 }
 
