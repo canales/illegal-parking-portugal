@@ -573,13 +573,13 @@
           <div class="rmode-wrap">
             <button class="rmode-btn" id="rmode-perkm" onclick="setRankMode('perkm')" data-i18n="rmode_perkm" style="flex:1">Per km road</button>
             <span class="rmode-info">?
-              <span class="rmode-tooltip" id="perkm-tooltip"></span>
+              <span class="rmode-tooltip" id="perkm-tooltip">Total reports divided by the municipality's road network length in km, based on OpenStreetMap data. Normalises for city size.</span>
             </span>
           </div>
           <div class="rmode-wrap">
             <button class="rmode-btn" id="rmode-trend" onclick="setRankMode('trend')" data-i18n="rmode_trend" style="flex:1">Trend</button>
             <span class="rmode-info">?
-              <span class="rmode-tooltip" id="trend-tooltip"></span>
+              <span class="rmode-tooltip" id="trend-tooltip">Compares average monthly reports in the last 12 months vs all prior months. Requires ≥10 recent reports and ≥20 total. ±10% margin is classified as stable.</span>
             </span>
           </div>
         </div>
@@ -683,7 +683,7 @@ const T = {
     trend_decreasing: '↓ Decreasing',
     trend_stable:     '→ Stable',
     trend_note:       '',
-    trend_tooltip:    'Compares average monthly reports in the last 12 months vs all prior months. Requires ≥10 recent reports and ≥15 total. ±10% margin is classified as stable.',
+    trend_tooltip:    'Compares average monthly reports in the last 12 months vs all prior months. Requires ≥10 recent reports and ≥20 total. ±10% margin is classified as stable.',
     perkm_tooltip:    'Total reports divided by the municipality\'s road network length in km, based on OpenStreetMap data. Normalises for city size.',
     rankings_export: '⬇ Download CSV',
     streets_rank_title: 'Street rankings',
@@ -738,7 +738,7 @@ const T = {
     trend_decreasing: '↓ A diminuir',
     trend_stable:     '→ Estável',
     trend_note:       '',
-    trend_tooltip:    'Compara a média mensal de denúncias nos últimos 12 meses com todos os meses anteriores. Requer ≥10 denúncias recentes e ≥15 no total. Uma variação de ±10% é classificada como estável.',
+    trend_tooltip:    'Compara a média mensal de denúncias nos últimos 12 meses com todos os meses anteriores. Requer ≥10 denúncias recentes e ≥20 no total. Uma variação de ±10% é classificada como estável.',
     perkm_tooltip:    'Total de denúncias dividido pelo comprimento da rede viária do município em km, com base em dados OpenStreetMap. Normaliza pelo tamanho da cidade.',
     rankings_export: '⬇ Descarregar CSV',
     streets_rank_title: 'Ranking de ruas',
@@ -1897,7 +1897,7 @@ function computeMuniTrends(typeFilter) {
     // Apply thresholds
     if (histMonthsWithData < 5)   return;
     if (recentMonthsWithData < 3) return;
-    if (total < 15)               return;
+    if (total < 20)               return;
     if (recentTotal < 10)         return; // need meaningful recent volume, not just occasional reports
 
     const histTotal   = histEntries.reduce((s, [, n]) => s + n, 0);
