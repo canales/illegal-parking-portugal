@@ -507,6 +507,21 @@
            oninput="setLayerOpacity(this.value)" />
     <span id="opacity-value">85%</span>
   </label>
+  <label id="poi-wrap">
+    <button id="btn-pois" class="toggle-btn" onclick="togglePois()" data-i18n="poi_toggle">Vulnerable areas</button>
+  </label>
+</div>
+
+<!-- POI legend — shown when POIs are visible -->
+<div id="poi-legend" style="display:none;position:absolute;bottom:40px;right:12px;
+  background:rgba(13,13,22,0.92);border:1px solid #2a2a3a;border-radius:8px;
+  padding:10px 14px;font-size:0.68rem;color:#ccc;z-index:10;line-height:2">
+  <div style="font-weight:700;margin-bottom:4px;font-size:0.72rem;text-transform:uppercase;
+    letter-spacing:0.5px;color:#aaa" data-i18n="poi_legend_title">Vulnerable areas</div>
+  <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#4363D8;margin-right:6px"></span><span data-i18n="poi_school">Schools</span></div>
+  <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#E6194B;margin-right:6px"></span><span data-i18n="poi_hospital">Hospitals</span></div>
+  <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F58231;margin-right:6px"></span><span data-i18n="poi_kindergarten">Kindergartens</span></div>
+  <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3CB44B;margin-right:6px"></span><span data-i18n="poi_care_home">Care homes</span></div>
 </div>
 
 <!-- ── Map ───────────────────────────────────────────────────────────────── -->
@@ -682,6 +697,12 @@ const T = {
     rmode_total:     'Total',
     rmode_perkm:     'Per km road',
     rmode_trend:     'Trend',
+    poi_toggle:          'Vulnerable areas',
+    poi_legend_title:    'Vulnerable areas',
+    poi_school:          'Schools',
+    poi_hospital:        'Hospitals',
+    poi_kindergarten:    'Kindergartens',
+    poi_care_home:       'Care homes',
     trend_increasing: '↑ Increasing',
     trend_decreasing: '↓ Decreasing',
     trend_stable:     '→ Stable',
@@ -737,6 +758,12 @@ const T = {
     rmode_total:     'Total',
     rmode_perkm:     'Por km de via',
     rmode_trend:     'Tendência',
+    poi_toggle:          'Zonas vulneráveis',
+    poi_legend_title:    'Zonas vulneráveis',
+    poi_school:          'Escolas',
+    poi_hospital:        'Hospitais',
+    poi_kindergarten:    'Jardins de infância',
+    poi_care_home:       'Lares / residências',
     trend_increasing: '↑ A aumentar',
     trend_decreasing: '↓ A diminuir',
     trend_stable:     '→ Estável',
@@ -965,6 +992,10 @@ let playInterval  = null;
 
 const POINTS_URL  = 'data/infractions.geojson';
 const STREETS_URL = 'data/streets_matched.geojson';
+const POIS_URL    = 'data/pois.geojson';
+
+let poiData       = null;     // GeoJSON from pois.geojson
+let poiVisible    = false;    // current visibility state
 
 // ════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -1031,10 +1062,11 @@ const STATS_URL   = 'data/stats.json';
 
 // ── Load data ──────────────────────────────────────────────────────────────
 map.on('load', async () => {
-  const [ptRes, stRes, statsRes] = await Promise.allSettled([
+  const [ptRes, stRes, statsRes, poisRes] = await Promise.allSettled([
     fetch(POINTS_URL).then(r => r.ok ? r.json() : Promise.reject()),
     fetch(STREETS_URL).then(r => r.ok ? r.json() : Promise.reject()),
-    fetch(STATS_URL).then(r => r.ok ? r.json() : Promise.reject())
+    fetch(STATS_URL).then(r => r.ok ? r.json() : Promise.reject()),
+    fetch(POIS_URL).then(r => r.ok ? r.json() : Promise.reject()),
   ]);
 
   if (ptRes.status === 'fulfilled') {
@@ -1048,6 +1080,10 @@ map.on('load', async () => {
     const btn = document.getElementById('btn-streets');
     btn.disabled = true;
     btn.title = t('streets_soon');
+  }
+
+  if (poisRes.status === 'fulfilled') {
+    poiData = poisRes.value;
   }
 
   initAllLayers();
@@ -1074,15 +1110,16 @@ function initAllLayers() {
   // Defensively remove any leftover sources/layers before adding.
   // After setStyle() MapLibre clears them, but if there's a race condition
   // this prevents "source already exists" errors that silently abort the function.
-  ['heatmap','points-circle','hex-extrusion','streets-line','streets-highlight'].forEach(id => {
+  ['heatmap','points-circle','hex-extrusion','streets-line','streets-highlight','pois-circle','pois-labels'].forEach(id => {
     if (map.getLayer(id)) map.removeLayer(id);
   });
-  ['points','hexbins','streets'].forEach(id => {
+  ['points','hexbins','streets','pois'].forEach(id => {
     if (map.getSource(id)) map.removeSource(id);
   });
 
   if (allData)    { initPointsLayers(); initHexLayer(); }
   if (streetData) { initStreetLayers(); }
+  if (poiData)    { initPoiLayer(); }
   initMunioBoundaryLayer();
   applyAllFilters();
   setView(currentView);
@@ -1246,7 +1283,116 @@ function initStreetLayers() {
   map.setLayoutProperty('streets-highlight', 'visibility', 'none');
 }
 
-function buildColorExpr() {
+// ════════════════════════════════════════════════════════════════════════════
+// POI LAYER
+// ════════════════════════════════════════════════════════════════════════════
+const POI_COLORS = {
+  school:       '#4363D8',
+  hospital:     '#E6194B',
+  kindergarten: '#F58231',
+  care_home:    '#3CB44B',
+};
+
+function initPoiLayer() {
+  if (!poiData) return;
+  map.addSource('pois', { type: 'geojson', data: poiData });
+
+  // Circle layer — coloured by poi_type
+  map.addLayer({
+    id: 'pois-circle', type: 'circle', source: 'pois',
+    paint: {
+      'circle-radius':       ['interpolate', ['linear'], ['zoom'], 10, 5, 15, 9],
+      'circle-color': ['match', ['get', 'poi_type'],
+        'school',       POI_COLORS.school,
+        'hospital',     POI_COLORS.hospital,
+        'kindergarten', POI_COLORS.kindergarten,
+        'care_home',    POI_COLORS.care_home,
+        '#888'
+      ],
+      'circle-stroke-color': 'rgba(0,0,0,0.6)',
+      'circle-stroke-width': 1.5,
+      'circle-opacity':      0.9,
+    }
+  });
+
+  // Label layer — name shown at higher zoom
+  map.addLayer({
+    id: 'pois-labels', type: 'symbol', source: 'pois',
+    minzoom: 14,
+    layout: {
+      'text-field':  ['get', 'name'],
+      'text-size':   11,
+      'text-offset': [0, 1.2],
+      'text-anchor': 'top',
+    },
+    paint: {
+      'text-color':       '#fff',
+      'text-halo-color':  'rgba(0,0,0,0.8)',
+      'text-halo-width':  1.5,
+    }
+  });
+
+  // Start hidden — user toggles on
+  map.setLayoutProperty('pois-circle', 'visibility', 'none');
+  map.setLayoutProperty('pois-labels', 'visibility', 'none');
+
+  // Click → show name + infraction count within 100m
+  map.on('click', 'pois-circle', e => {
+    const p        = e.features[0].properties;
+    const coords   = e.features[0].geometry.coordinates;
+    const count    = countInfractionsNear(coords[1], coords[0], 100);
+    const typeName = lang === 'pt' ? p.label_pt : p.label_en;
+
+    new maplibregl.Popup({ closeButton: true, maxWidth: '240px' })
+      .setLngLat(coords)
+      .setHTML(`
+        <div style="font-family:inherit;padding:4px 2px">
+          <div style="font-weight:700;font-size:0.85rem;margin-bottom:4px">${p.name}</div>
+          <div style="font-size:0.72rem;color:#aaa;margin-bottom:6px">${typeName}</div>
+          <div style="font-size:0.78rem">
+            <span style="font-weight:700;color:#e63946">${count}</span>
+            ${lang === 'pt' ? 'denúncias num raio de 100m' : 'reports within 100m'}
+          </div>
+        </div>`)
+      .addTo(map);
+    e._poiClick = true;
+  });
+
+  map.on('mouseenter', 'pois-circle', () => map.getCanvas().style.cursor = 'pointer');
+  map.on('mouseleave', 'pois-circle', () => map.getCanvas().style.cursor = '');
+}
+
+function togglePois() {
+  poiVisible = !poiVisible;
+  const vis  = poiVisible ? 'visible' : 'none';
+  if (map.getLayer('pois-circle')) map.setLayoutProperty('pois-circle', 'visibility', vis);
+  if (map.getLayer('pois-labels')) map.setLayoutProperty('pois-labels', 'visibility', vis);
+  const btn = document.getElementById('btn-pois');
+  if (btn) btn.classList.toggle('active', poiVisible);
+  const legend = document.getElementById('poi-legend');
+  if (legend) legend.style.display = poiVisible ? '' : 'none';
+}
+
+// Count infraction reports within `radiusM` metres of a lat/lon point
+function countInfractionsNear(lat, lon, radiusM) {
+  if (!allData) return 0;
+  const features = getFilteredFeatures();
+  let count = 0;
+  for (const f of features) {
+    const [fLon, fLat] = f.geometry.coordinates;
+    if (haversineMetres(lat, lon, fLat, fLon) <= radiusM) count++;
+  }
+  return count;
+}
+
+function haversineMetres(lat1, lon1, lat2, lon2) {
+  const R  = 6371000;
+  const d1 = (lat2 - lat1) * Math.PI / 180;
+  const d2 = (lon2 - lon1) * Math.PI / 180;
+  const a  = Math.sin(d1/2)**2 +
+             Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(d2/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
   if (!typeList.length) return '#e63946';
   const expr = ['match', ['get', 'infraction_type']];
   typeList.forEach((tp, i) => expr.push(tp, TYPE_COLORS[i % TYPE_COLORS.length]));
