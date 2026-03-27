@@ -268,6 +268,24 @@
     .trend-stable     { color: #888;    font-weight: 700; font-size: 0.72rem; }
     .rank-trend-note  { font-size: 0.62rem; color: #555; margin-bottom: 6px; }
 
+    /* ── Info tooltip ────────────────────────────────────────────────────── */
+    .rmode-wrap { position: relative; flex: 1; display: flex; }
+    .rmode-info {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 13px; height: 13px; border-radius: 50%;
+      background: #2a2a3a; color: #666; font-size: 0.58rem;
+      cursor: help; flex-shrink: 0; margin-left: 3px; align-self: center;
+      border: 1px solid #3a3a4a;
+    }
+    .rmode-info:hover .rmode-tooltip { display: block; }
+    .rmode-tooltip {
+      display: none; position: absolute; bottom: calc(100% + 8px); left: 0;
+      width: 220px; background: #1a1a2e; border: 1px solid #3a3a4a;
+      border-radius: 6px; padding: 8px 10px; font-size: 0.68rem;
+      color: #bbb; line-height: 1.5; z-index: 50;
+      pointer-events: none;
+    }
+
     /* Infraction filter inside rankings */
     #rankings-type-filter {
       width: 100%; background: #111; border: 1px solid #2a2a3a;
@@ -552,8 +570,18 @@
       <div id="rankings-body">
         <div id="rankings-mode">
           <button class="rmode-btn active" id="rmode-total"  onclick="setRankMode('total')"  data-i18n="rmode_total">Total</button>
-          <button class="rmode-btn"        id="rmode-perkm"  onclick="setRankMode('perkm')"  data-i18n="rmode_perkm">Per km road</button>
-          <button class="rmode-btn"        id="rmode-trend"  onclick="setRankMode('trend')"  data-i18n="rmode_trend">Trend</button>
+          <div class="rmode-wrap">
+            <button class="rmode-btn" id="rmode-perkm" onclick="setRankMode('perkm')" data-i18n="rmode_perkm" style="flex:1">Per km road</button>
+            <span class="rmode-info">?
+              <span class="rmode-tooltip" id="perkm-tooltip"></span>
+            </span>
+          </div>
+          <div class="rmode-wrap">
+            <button class="rmode-btn" id="rmode-trend" onclick="setRankMode('trend')" data-i18n="rmode_trend" style="flex:1">Trend</button>
+            <span class="rmode-info">?
+              <span class="rmode-tooltip" id="trend-tooltip"></span>
+            </span>
+          </div>
         </div>
         <select id="rankings-type-filter" onchange="renderRankings()">
           <option value="all" data-i18n="filter_all">All</option>
@@ -654,7 +682,9 @@ const T = {
     trend_increasing: '↑ Increasing',
     trend_decreasing: '↓ Decreasing',
     trend_stable:     '→ Stable',
-    trend_note:       'Reports/month: last 12mo vs historical avg',
+    trend_note:       '',
+    trend_tooltip:    'Compares average monthly reports in the last 12 months vs all prior months. Requires ≥10 recent reports and ≥15 total. ±10% margin is classified as stable.',
+    perkm_tooltip:    'Total reports divided by the municipality\'s road network length in km, based on OpenStreetMap data. Normalises for city size.',
     rankings_export: '⬇ Download CSV',
     streets_rank_title: 'Street rankings',
     streets_muni_all:   '— Select municipality —',
@@ -707,7 +737,9 @@ const T = {
     trend_increasing: '↑ A aumentar',
     trend_decreasing: '↓ A diminuir',
     trend_stable:     '→ Estável',
-    trend_note:       'Denúncias/mês: últimos 12 meses vs média histórica',
+    trend_note:       '',
+    trend_tooltip:    'Compara a média mensal de denúncias nos últimos 12 meses com todos os meses anteriores. Requer ≥10 denúncias recentes e ≥15 no total. Uma variação de ±10% é classificada como estável.',
+    perkm_tooltip:    'Total de denúncias dividido pelo comprimento da rede viária do município em km, com base em dados OpenStreetMap. Normaliza pelo tamanho da cidade.',
     rankings_export: '⬇ Descarregar CSV',
     streets_rank_title: 'Ranking de ruas',
     streets_muni_all:   '— Selecionar município —',
@@ -976,6 +1008,7 @@ function setLang(l) {
     updateRankingsLang();
   }
   renderUpdateBadge();
+  updateRankingTooltips();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1698,7 +1731,15 @@ async function initRankings() {
   });
 
   positionRankingsPanel();
+  updateRankingTooltips();
   renderRankings();
+}
+
+function updateRankingTooltips() {
+  const perkm = document.getElementById('perkm-tooltip');
+  const trend = document.getElementById('trend-tooltip');
+  if (perkm) perkm.textContent = T[lang].perkm_tooltip;
+  if (trend) trend.textContent = T[lang].trend_tooltip;
 }
 
 // Fallback: compute road lengths from matched streets only (less accurate)
@@ -1746,7 +1787,6 @@ function renderRankings() {
       return;
     }
     listEl.innerHTML =
-      `<div class="rank-trend-note">${t('trend_note')}</div>` +
       trends.map((r, i) => {
         const cls   = r.direction === 'increasing' ? 'trend-increasing'
                     : r.direction === 'decreasing' ? 'trend-decreasing'
