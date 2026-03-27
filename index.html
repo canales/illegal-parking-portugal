@@ -1851,16 +1851,17 @@ function computeMuniTrends(typeFilter) {
 
     const histMonthsWithData   = histEntries.filter(([, n]) => n > 0).length;
     const recentMonthsWithData = recentEntries.filter(([, n]) => n > 0).length;
-    const total = Object.values(monthly).reduce((s, n) => s + n, 0);
+    const total      = Object.values(monthly).reduce((s, n) => s + n, 0);
+    const recentTotal = recentEntries.reduce((s, [, n]) => s + n, 0);
 
     // Apply thresholds
     if (histMonthsWithData < 5)   return;
     if (recentMonthsWithData < 3) return;
     if (total < 15)               return;
+    if (recentTotal < 10)         return; // need meaningful recent volume, not just occasional reports
 
-    const histTotal    = histEntries.reduce((s, [, n]) => s + n, 0);
-    const recentTotal  = recentEntries.reduce((s, [, n]) => s + n, 0);
-    const histMonths   = histEntries.length   || 1;
+    const histTotal   = histEntries.reduce((s, [, n]) => s + n, 0);
+    const histMonths  = histEntries.length   || 1;
     const recentMonths = recentEntries.length || 1;
 
     const histRate   = histTotal   / histMonths;
