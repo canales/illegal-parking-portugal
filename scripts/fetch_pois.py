@@ -25,6 +25,7 @@ Usage:
 
 import json
 import os
+import socket
 import sys
 import time
 import urllib.request
@@ -43,9 +44,12 @@ OVERPASS_URLS = [
     'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
     'https://overpass-api.de/api/interpreter',
 ]
-TIMEOUT   = 90    # per-cell query timeout in seconds
+TIMEOUT   = 60    # per-cell query timeout in seconds
 CELL_SIZE = 0.5   # degrees — ~55km cells, ~77 cells cover Portugal bbox
-SLEEP_S   = 5     # seconds between cells
+SLEEP_S   = 3     # seconds between cells
+
+# Hard socket-level timeout — prevents urllib from hanging indefinitely
+socket.setdefaulttimeout(TIMEOUT + 10)
 
 # Portugal mainland bounding box (south, west, north, east)
 PT_SOUTH, PT_WEST, PT_NORTH, PT_EAST = 36.9, -9.5, 42.2, -6.2
