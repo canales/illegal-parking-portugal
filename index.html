@@ -1403,7 +1403,12 @@ async function initPoiLayer() {
         'care_home',    'poi-care_home',
         'poi-school'
       ],
-      'icon-size':          ['interpolate', ['linear'], ['zoom'], 10, 0.5, 14, 0.8, 17, 1.2],
+      'icon-size': [
+        'interpolate', ['linear'], ['zoom'],
+        10, ['interpolate', ['linear'], ['get', 'relevant_count'], 1, 0.5,  15, 1.25],
+        14, ['interpolate', ['linear'], ['get', 'relevant_count'], 1, 0.8,  15, 2.0],
+        17, ['interpolate', ['linear'], ['get', 'relevant_count'], 1, 1.2,  15, 3.0],
+      ],
       'icon-allow-overlap': true,
       'icon-anchor':        'center',
     }
@@ -1546,15 +1551,18 @@ function filterPoiByRelevantInfractions(poi, radiusM) {
   const margin      = Math.ceil((radiusM / 111000) / CELL) + 1;
   const idx         = buildInfractionIndex(allFeatures);
 
-  const kept = poi.features.filter(f => {
+  const kept = [];
+
+  for (const f of poi.features) {
     const [lon, lat] = f.geometry.coordinates;
     const relevant   = POI_RELEVANT_TYPES[f.properties.poi_type] || [];
-    if (!relevant.length) return false;
+    if (!relevant.length) continue;
 
     const cLat = Math.floor(lat / CELL);
     const cLon = Math.floor(lon / CELL);
 
-    // Check surrounding grid cells
+    // Count relevant infractions within radiusM
+    let count = 0;
     for (let dy = -margin; dy <= margin; dy++) {
       for (let dx = -margin; dx <= margin; dx++) {
         const key  = `${cLat + dy},${cLon + dx}`;
@@ -1563,12 +1571,18 @@ function filterPoiByRelevantInfractions(poi, radiusM) {
         for (const inf of cell) {
           if (!relevant.includes(inf.properties.infraction_type)) continue;
           const [iLon, iLat] = inf.geometry.coordinates;
-          if (haversineMetres(lat, lon, iLat, iLon) <= radiusM) return true;
+          if (haversineMetres(lat, lon, iLat, iLon) <= radiusM) count++;
         }
       }
     }
-    return false;
-  });
+
+    if (count > 0) {
+      kept.push({
+        ...f,
+        properties: { ...f.properties, relevant_count: count }
+      });
+    }
+  }
 
   return { ...poi, features: kept };
 }
