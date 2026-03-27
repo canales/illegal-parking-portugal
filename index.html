@@ -275,19 +275,19 @@
       width: 13px; height: 13px; border-radius: 50%;
       background: #2a2a3a; color: #666; font-size: 0.58rem;
       cursor: help; flex-shrink: 0; margin-left: 3px; align-self: center;
-      border: 1px solid #3a3a4a;
+      border: 1px solid #3a3a4a; position: relative;
     }
     .rmode-info:hover .rmode-tooltip { display: block; }
     .rmode-tooltip {
-      display: none; position: absolute; bottom: calc(100% + 8px); left: 0;
+      display: none; position: fixed;
       width: 220px; background: #1a1a2e; border: 1px solid #3a3a4a;
       border-radius: 6px; padding: 8px 10px; font-size: 0.68rem;
-      color: #bbb; line-height: 1.5; z-index: 100;
+      color: #bbb; line-height: 1.5; z-index: 9999;
       pointer-events: none;
+      /* Positioned via JS on hover */
+      bottom: auto; left: auto;
     }
-    /* Allow tooltip to escape the panel's overflow:hidden */
-    #rankings-body { overflow: visible !important; }
-    #rankings-mode { overflow: visible !important; }
+    /* Remove overrides no longer needed */
 
     /* Infraction filter inside rankings */
     #rankings-type-filter {
@@ -1745,6 +1745,23 @@ function updateRankingTooltips() {
   if (trend) trend.textContent = T[lang].trend_tooltip;
 }
 
+// Position fixed tooltips above their trigger element on hover
+document.addEventListener('mouseover', e => {
+  const info = e.target.closest('.rmode-info');
+  if (!info) return;
+  const tip = info.querySelector('.rmode-tooltip');
+  if (!tip) return;
+  const rect = info.getBoundingClientRect();
+  // Show briefly to measure, then position
+  tip.style.visibility = 'hidden';
+  tip.style.display = 'block';
+  const tipH = tip.offsetHeight;
+  tip.style.display = '';
+  tip.style.visibility = '';
+  tip.style.top  = (rect.top - tipH - 8) + 'px';
+  tip.style.left = rect.left + 'px';
+});
+
 // Fallback: compute road lengths from matched streets only (less accurate)
 function computeRoadLengthFromStreets() {
   if (!streetData) return {};
@@ -1778,11 +1795,11 @@ function setRankMode(mode) {
 }
 
 function renderRankings() {
-  if (!muniStats || !muniRoadLengths) return;
+  if (!muniStats) return;
   const typeFilter = document.getElementById('rankings-type-filter').value;
   const listEl     = document.getElementById('rankings-list');
 
-  // ── Trend mode ─────────────────────────────────────────────────────────
+  // ── Trend mode — doesn't need muniRoadLengths ──────────────────────────
   if (rankMode === 'trend') {
     const trends = computeMuniTrends(typeFilter);
     if (!trends.length) {
@@ -1815,6 +1832,7 @@ function renderRankings() {
   }
 
   // ── Total / Per km modes ────────────────────────────────────────────────
+  if (!muniRoadLengths && rankMode === 'perkm') return;
   let rows = Object.entries(muniStats)
     .filter(([muni]) => muni !== 'Other')
     .map(([muni, s]) => {
