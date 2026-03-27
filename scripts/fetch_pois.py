@@ -171,17 +171,36 @@ def element_to_feature(el: dict, poi_type: str) -> Optional[dict]:
         'type': 'Feature',
         'geometry': {'type': 'Point', 'coordinates': [round(lon, 6), round(lat, 6)]},
         'properties': {
-            'osm_id':   el.get('id'),
-            'osm_type': el['type'],
-            'poi_type': poi_type,
-            'name':     tags.get('name', ''),
-            'label_en': info['label_en'],
-            'label_pt': info['label_pt'],
-            'color':    info['color'],
-            'address':  tags.get('addr:street', ''),
-            'operator': tags.get('operator', ''),
+            'osm_id':        el.get('id'),
+            'osm_type':      el['type'],
+            'poi_type':      poi_type,
+            'name':          tags.get('name', ''),
+            'label_en':      info['label_en'],
+            'label_pt':      info['label_pt'],
+            'color':         info['color'],
+            'address':       tags.get('addr:street', ''),
+            'operator':      tags.get('operator', ''),
+            'opening_hours': tags.get('opening_hours', ''),
         }
     }
+
+
+# ── Proximity filter ───────────────────────────────────────────────────────
+def haversine_m(lat1, lon1, lat2, lon2):
+    """Return distance in metres between two lat/lon points."""
+    R  = 6371000
+    d1 = (lat2 - lat1) * 3.141592653589793 / 180
+    d2 = (lon2 - lon1) * 3.141592653589793 / 180
+    a  = (d1/2)**2 + (d2/2)**2  # simplified for small distances
+    return R * 2 * (a ** 0.5)   # small-angle approximation, fine for <5km
+
+
+def poi_near_infraction(poi_lat, poi_lon, inf_coords, radius_m):
+    """Return True if any infraction is within radius_m metres of the POI."""
+    for ilat, ilon in inf_coords:
+        if haversine_m(poi_lat, poi_lon, ilat, ilon) <= radius_m:
+            return True
+    return False
 
 
 # ── Main ───────────────────────────────────────────────────────────────────
@@ -251,6 +270,36 @@ def main():
     # Warn if any cells failed — they'll be retried next run
     if failed:
         print(f'\n⚠ {failed} cell(s) failed — cache gaps will be filled on next run.')
+
+    # ── 500m proximity filter ──────────────────────────────────────────────
+    # Only keep POIs that have at least one infraction within 500m.
+    # This ensures the layer stays relevant to the infraction data and avoids
+    # surfacing POIs in areas with no reporting activity.
+    infractions_path = os.path.join(ROOT, 'data', 'infractions.geojson')
+    if os.path.exists(infractions_path):
+        print('\nApplying 500m proximity filter against infractions.geojson...')
+        with open(infractions_path, 'r', encoding='utf-8') as f:
+            inf_data = json.load(f)
+        inf_coords = [
+            (feat['geometry']['coordinates'][1], feat['geometry']['coordinates'][0])
+            for feat in inf_data.get('features', [])
+            if feat.get('geometry') and feat['geometry'].get('coordinates')
+        ]
+        before = len(features)
+        features = [f for f in features if poi_near_infraction(
+            f['geometry']['coordinates'][1],
+            f['geometry']['coordinates'][0],
+            inf_coords, 500
+        )]
+        print(f'  {before} POIs → {len(features)} kept (within 500m of an infraction)')
+        # Rebuild by_type counts after filter
+        by_type = {k: 0 for k in POI_TYPES}
+        for f in features:
+            pt = f['properties'].get('poi_type')
+            if pt in by_type:
+                by_type[pt] += 1
+    else:
+        print('\n⚠ infractions.geojson not found — skipping proximity filter.')
 
     # Save merged GeoJSON
     geojson = {
