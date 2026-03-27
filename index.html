@@ -49,6 +49,23 @@
     .toggle-btn.active   { background: #e63946; border-color: #e63946; color: white; }
     .toggle-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
+    /* ── MapLibre POI popup dark theme ──────────────────────────────────── */
+    .maplibregl-popup-content {
+      background: rgba(13,13,22,0.96) !important;
+      color: #ddd !important;
+      border: 1px solid #2a2a3a !important;
+      border-radius: 8px !important;
+      padding: 10px 12px !important;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.6) !important;
+      font-family: inherit !important;
+    }
+    .maplibregl-popup-close-button {
+      color: #666 !important;
+      font-size: 1rem !important;
+    }
+    .maplibregl-popup-close-button:hover { color: #fff !important; }
+    .maplibregl-popup-tip { border-top-color: rgba(13,13,22,0.96) !important; }
+
     /* ── Opacity slider ─────────────────────────────────────────────────── */
     #opacity-wrap { display: none; align-items: center; gap: 7px; }
     #opacity-wrap.visible { display: flex; }
@@ -508,7 +525,7 @@
     <span id="opacity-value">85%</span>
   </label>
   <label id="poi-wrap">
-    <button id="btn-pois" class="toggle-btn" onclick="togglePois()" data-i18n="poi_toggle">Vulnerable areas</button>
+    <button id="btn-pois" class="toggle-btn" onclick="togglePois()" data-i18n="poi_toggle">Sensitive locations</button>
   </label>
 </div>
 
@@ -517,11 +534,11 @@
   background:rgba(13,13,22,0.92);border:1px solid #2a2a3a;border-radius:8px;
   padding:10px 14px;font-size:0.68rem;color:#ccc;z-index:10;line-height:2">
   <div style="font-weight:700;margin-bottom:4px;font-size:0.72rem;text-transform:uppercase;
-    letter-spacing:0.5px;color:#aaa" data-i18n="poi_legend_title">Vulnerable areas</div>
-  <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#4363D8;margin-right:6px"></span><span data-i18n="poi_school">Schools</span></div>
-  <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#E6194B;margin-right:6px"></span><span data-i18n="poi_hospital">Hospitals</span></div>
-  <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F58231;margin-right:6px"></span><span data-i18n="poi_kindergarten">Kindergartens</span></div>
-  <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3CB44B;margin-right:6px"></span><span data-i18n="poi_care_home">Care homes</span></div>
+    letter-spacing:0.5px;color:#aaa" data-i18n="poi_legend_title">Sensitive locations</div>
+  <div>🏫 <span data-i18n="poi_school">Schools</span></div>
+  <div>🏥 <span data-i18n="poi_hospital">Hospitals</span></div>
+  <div>🧒 <span data-i18n="poi_kindergarten">Kindergartens</span></div>
+  <div>🏠 <span data-i18n="poi_care_home">Care homes</span></div>
 </div>
 
 <!-- ── Map ───────────────────────────────────────────────────────────────── -->
@@ -697,8 +714,8 @@ const T = {
     rmode_total:     'Total',
     rmode_perkm:     'Per km road',
     rmode_trend:     'Trend',
-    poi_toggle:          'Vulnerable areas',
-    poi_legend_title:    'Vulnerable areas',
+    poi_toggle:          'Sensitive locations',
+    poi_legend_title:    'Sensitive locations',
     poi_school:          'Schools',
     poi_hospital:        'Hospitals',
     poi_kindergarten:    'Kindergartens',
@@ -758,8 +775,8 @@ const T = {
     rmode_total:     'Total',
     rmode_perkm:     'Por km de via',
     rmode_trend:     'Tendência',
-    poi_toggle:          'Zonas vulneráveis',
-    poi_legend_title:    'Zonas vulneráveis',
+    poi_toggle:          'Locais sensíveis',
+    poi_legend_title:    'Locais sensíveis',
     poi_school:          'Escolas',
     poi_hospital:        'Hospitais',
     poi_kindergarten:    'Jardins de infância',
@@ -1293,36 +1310,45 @@ const POI_COLORS = {
   care_home:    '#3CB44B',
 };
 
+const POI_EMOJI = {
+  school:       '🏫',
+  hospital:     '🏥',
+  kindergarten: '🧒',
+  care_home:    '🏠',
+};
+
 function initPoiLayer() {
   if (!poiData) return;
   map.addSource('pois', { type: 'geojson', data: poiData });
 
-  // Circle layer — coloured by poi_type
+  // Emoji icon layer — scales with zoom
   map.addLayer({
-    id: 'pois-circle', type: 'circle', source: 'pois',
-    paint: {
-      'circle-radius':       ['interpolate', ['linear'], ['zoom'], 10, 5, 15, 9],
-      'circle-color': ['match', ['get', 'poi_type'],
-        'school',       POI_COLORS.school,
-        'hospital',     POI_COLORS.hospital,
-        'kindergarten', POI_COLORS.kindergarten,
-        'care_home',    POI_COLORS.care_home,
-        '#888'
+    id: 'pois-circle', type: 'symbol', source: 'pois',
+    layout: {
+      'text-field': ['match', ['get', 'poi_type'],
+        'school',       '🏫',
+        'hospital',     '🏥',
+        'kindergarten', '🧒',
+        'care_home',    '🏠',
+        '📍'
       ],
-      'circle-stroke-color': 'rgba(0,0,0,0.6)',
-      'circle-stroke-width': 1.5,
-      'circle-opacity':      0.9,
+      'text-size':        ['interpolate', ['linear'], ['zoom'], 10, 12, 15, 20],
+      'text-allow-overlap': false,
+      'text-anchor':      'center',
+    },
+    paint: {
+      'text-opacity': 0.95,
     }
   });
 
-  // Label layer — name shown at higher zoom
+  // Name label — shown at higher zoom
   map.addLayer({
     id: 'pois-labels', type: 'symbol', source: 'pois',
-    minzoom: 14,
+    minzoom: 15,
     layout: {
       'text-field':  ['get', 'name'],
-      'text-size':   11,
-      'text-offset': [0, 1.2],
+      'text-size':   10,
+      'text-offset': [0, 1.4],
       'text-anchor': 'top',
     },
     paint: {
@@ -1332,26 +1358,33 @@ function initPoiLayer() {
     }
   });
 
-  // Start hidden — user toggles on
   map.setLayoutProperty('pois-circle', 'visibility', 'none');
   map.setLayoutProperty('pois-labels', 'visibility', 'none');
 
-  // Click → show name + infraction count within 100m
+  // Click → popup with name, type, infraction count, opening hours
   map.on('click', 'pois-circle', e => {
     const p        = e.features[0].properties;
     const coords   = e.features[0].geometry.coordinates;
-    const count    = countInfractionsNear(coords[1], coords[0], 100);
+    const count    = countInfractionsNear(coords[1], coords[0], 500);
     const typeName = lang === 'pt' ? p.label_pt : p.label_en;
+    const emoji    = POI_EMOJI[p.poi_type] || '📍';
+    const hours    = p.opening_hours
+      ? `<div style="font-size:0.68rem;color:#888;margin-top:4px">🕐 ${p.opening_hours}</div>`
+      : '';
+    const address  = p.address
+      ? `<div style="font-size:0.68rem;color:#888;margin-top:2px">📍 ${p.address}</div>`
+      : '';
 
-    new maplibregl.Popup({ closeButton: true, maxWidth: '240px' })
+    new maplibregl.Popup({ closeButton: true, maxWidth: '260px' })
       .setLngLat(coords)
       .setHTML(`
-        <div style="font-family:inherit;padding:4px 2px">
-          <div style="font-weight:700;font-size:0.85rem;margin-bottom:4px">${p.name}</div>
+        <div style="font-family:inherit">
+          <div style="font-weight:700;font-size:0.85rem;margin-bottom:3px">${emoji} ${p.name}</div>
           <div style="font-size:0.72rem;color:#aaa;margin-bottom:6px">${typeName}</div>
-          <div style="font-size:0.78rem">
+          ${address}${hours}
+          <div style="font-size:0.78rem;margin-top:8px;padding-top:8px;border-top:1px solid #2a2a3a">
             <span style="font-weight:700;color:#e63946">${count}</span>
-            ${lang === 'pt' ? 'denúncias num raio de 100m' : 'reports within 100m'}
+            <span style="color:#aaa"> ${lang === 'pt' ? 'denúncias num raio de 500m' : 'reports within 500m'}</span>
           </div>
         </div>`)
       .addTo(map);
