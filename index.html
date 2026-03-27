@@ -263,6 +263,10 @@
       border: none; transition: all 0.15s;
     }
     .rmode-btn.active { background: #e63946; color: #fff; }
+    .trend-increasing { color: #e63946; font-weight: 700; font-size: 0.72rem; }
+    .trend-decreasing { color: #4caf50; font-weight: 700; font-size: 0.72rem; }
+    .trend-stable     { color: #888;    font-weight: 700; font-size: 0.72rem; }
+    .rank-trend-note  { font-size: 0.62rem; color: #555; margin-bottom: 6px; }
 
     /* Infraction filter inside rankings */
     #rankings-type-filter {
@@ -549,6 +553,7 @@
         <div id="rankings-mode">
           <button class="rmode-btn active" id="rmode-total"  onclick="setRankMode('total')"  data-i18n="rmode_total">Total</button>
           <button class="rmode-btn"        id="rmode-perkm"  onclick="setRankMode('perkm')"  data-i18n="rmode_perkm">Per km road</button>
+          <button class="rmode-btn"        id="rmode-trend"  onclick="setRankMode('trend')"  data-i18n="rmode_trend">Trend</button>
         </div>
         <select id="rankings-type-filter" onchange="renderRankings()">
           <option value="all" data-i18n="filter_all">All</option>
@@ -645,6 +650,11 @@ const T = {
     rankings_title:  'City rankings',
     rmode_total:     'Total',
     rmode_perkm:     'Per km road',
+    rmode_trend:     'Trend',
+    trend_increasing: '↑ Increasing',
+    trend_decreasing: '↓ Decreasing',
+    trend_stable:     '→ Stable',
+    trend_note:       'Reports/month: last 12mo vs historical avg',
     rankings_export: '⬇ Download CSV',
     streets_rank_title: 'Street rankings',
     streets_muni_all:   '— Select municipality —',
@@ -693,6 +703,11 @@ const T = {
     rankings_title:  'Ranking de cidades',
     rmode_total:     'Total',
     rmode_perkm:     'Por km de via',
+    rmode_trend:     'Tendência',
+    trend_increasing: '↑ A aumentar',
+    trend_decreasing: '↓ A diminuir',
+    trend_stable:     '→ Estável',
+    trend_note:       'Denúncias/mês: últimos 12 meses vs média histórica',
     rankings_export: '⬇ Descarregar CSV',
     streets_rank_title: 'Ranking de ruas',
     streets_muni_all:   '— Selecionar município —',
@@ -1714,14 +1729,49 @@ function setRankMode(mode) {
   rankMode = mode;
   document.getElementById('rmode-total').classList.toggle('active', mode === 'total');
   document.getElementById('rmode-perkm').classList.toggle('active', mode === 'perkm');
+  document.getElementById('rmode-trend').classList.toggle('active', mode === 'trend');
   renderRankings();
 }
 
 function renderRankings() {
   if (!muniStats || !muniRoadLengths) return;
   const typeFilter = document.getElementById('rankings-type-filter').value;
+  const listEl     = document.getElementById('rankings-list');
 
-  // Build ranked list
+  // ── Trend mode ─────────────────────────────────────────────────────────
+  if (rankMode === 'trend') {
+    const trends = computeMuniTrends(typeFilter);
+    if (!trends.length) {
+      listEl.innerHTML = `<div style="font-size:0.72rem;color:#555;padding:6px 0">Insufficient data for trend analysis</div>`;
+      return;
+    }
+    listEl.innerHTML =
+      `<div class="rank-trend-note">${t('trend_note')}</div>` +
+      trends.map((r, i) => {
+        const cls   = r.direction === 'increasing' ? 'trend-increasing'
+                    : r.direction === 'decreasing' ? 'trend-decreasing'
+                    : 'trend-stable';
+        const label = t(`trend_${r.direction}`);
+        const pct   = r.changePct >= 0 ? `+${r.changePct}%` : `${r.changePct}%`;
+        return `
+          <div class="rank-row" style="cursor:pointer" onclick="flyToMuni('${r.muni.replace(/'/g, "\\'")}')">
+            <div class="rank-num">${i + 1}</div>
+            <div class="rank-bar-wrap">
+              <div class="rank-name" title="${r.muni}">${r.muni}</div>
+              <div class="rank-meta">
+                <div class="rank-bar-bg"><div class="rank-bar" style="width:${r.barPct}%"></div></div>
+                <div class="rank-val" style="min-width:80px;text-align:right">
+                  <span class="${cls}">${label}</span>
+                  <span style="color:#666;font-size:0.66rem;margin-left:4px">${pct}</span>
+                </div>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    return;
+  }
+
+  // ── Total / Per km modes ────────────────────────────────────────────────
   let rows = Object.entries(muniStats)
     .filter(([muni]) => muni !== 'Other')
     .map(([muni, s]) => {
@@ -1737,7 +1787,7 @@ function renderRankings() {
 
   const maxVal = rows.length ? rows[0].value : 1;
 
-  document.getElementById('rankings-list').innerHTML = rows.map((r, i) => {
+  listEl.innerHTML = rows.map((r, i) => {
     const barPct = Math.round(100 * r.value / maxVal);
     const valStr = rankMode === 'perkm'
       ? r.value.toFixed(2)
@@ -1754,6 +1804,94 @@ function renderRankings() {
         </div>
       </div>`;
   }).join('');
+}
+
+/**
+ * Compute municipality trends: reports/month in last 12 months vs historical average.
+ *
+ * Methodology:
+ * - "Recent" = last 12 calendar months from the most recent month in the dataset
+ * - "Historical" = all months before the recent window
+ * - Only municipalities meeting ALL three thresholds are included:
+ *     ≥ 5 months with ≥1 report in the historical window (enough history)
+ *     ≥ 3 months with ≥1 report in the recent window (recently active)
+ *     ≥ 15 total reports (enough volume for a meaningful signal)
+ * - Direction: >+10% = increasing, <-10% = decreasing, otherwise stable
+ * - Sorted: increasing first (worst), then stable, then decreasing (improving)
+ */
+function computeMuniTrends(typeFilter) {
+  if (!allData || !months.length) return [];
+
+  // Determine recent/historical split from full dataset months
+  const allMonths = [...months].sort();
+  const latestYM  = allMonths[allMonths.length - 1];
+  const [ly, lm]  = latestYM.split('-').map(Number);
+  // Go back 12 months from latest
+  let splitY = ly, splitM = lm - 12;
+  if (splitM <= 0) { splitY--; splitM += 12; }
+  const splitYM = `${splitY}-${String(splitM).padStart(2, '0')}`;
+
+  // Aggregate per municipality per month
+  const muniMonthly = {}; // { muni: { 'YYYY-MM': count } }
+  allData.features.forEach(f => {
+    const muni = getMuni(f);
+    if (!muni) return;
+    if (typeFilter !== 'all' && f.properties.infraction_type !== typeFilter) return;
+    const ym = (f.properties.data_data || '').substring(0, 7);
+    if (!ym || ym.length !== 7) return;
+    if (!muniMonthly[muni]) muniMonthly[muni] = {};
+    muniMonthly[muni][ym] = (muniMonthly[muni][ym] || 0) + 1;
+  });
+
+  const results = [];
+
+  Object.entries(muniMonthly).forEach(([muni, monthly]) => {
+    const histEntries   = Object.entries(monthly).filter(([ym]) => ym <  splitYM);
+    const recentEntries = Object.entries(monthly).filter(([ym]) => ym >= splitYM);
+
+    const histMonthsWithData   = histEntries.filter(([, n]) => n > 0).length;
+    const recentMonthsWithData = recentEntries.filter(([, n]) => n > 0).length;
+    const total = Object.values(monthly).reduce((s, n) => s + n, 0);
+
+    // Apply thresholds
+    if (histMonthsWithData < 5)   return;
+    if (recentMonthsWithData < 3) return;
+    if (total < 15)               return;
+
+    const histTotal    = histEntries.reduce((s, [, n]) => s + n, 0);
+    const recentTotal  = recentEntries.reduce((s, [, n]) => s + n, 0);
+    const histMonths   = histEntries.length   || 1;
+    const recentMonths = recentEntries.length || 1;
+
+    const histRate   = histTotal   / histMonths;
+    const recentRate = recentTotal / recentMonths;
+
+    const changePct  = histRate > 0
+      ? Math.round(((recentRate - histRate) / histRate) * 100)
+      : 0;
+
+    const direction = changePct >  10 ? 'increasing'
+                    : changePct < -10 ? 'decreasing'
+                    : 'stable';
+
+    results.push({ muni, changePct, direction, recentRate, total });
+  });
+
+  // Sort: increasing (worst) first, then stable, then decreasing (improving)
+  const order = { increasing: 0, stable: 1, decreasing: 2 };
+  results.sort((a, b) => {
+    if (order[a.direction] !== order[b.direction])
+      return order[a.direction] - order[b.direction];
+    // Within same direction: sort by absolute change magnitude
+    return Math.abs(b.changePct) - Math.abs(a.changePct);
+  });
+
+  // Add bar percentage for visual (based on absolute changePct)
+  const maxAbs = results.length ? Math.max(...results.map(r => Math.abs(r.changePct))) : 1;
+  return results.map(r => ({
+    ...r,
+    barPct: Math.round(100 * Math.abs(r.changePct) / maxAbs)
+  }));
 }
 
 function normalizeMuniName(name) {
