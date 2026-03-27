@@ -5,9 +5,12 @@ Fetches Points of Interest relevant to vulnerable road users from the
 Overpass API (OpenStreetMap) and saves them to data/pois.geojson.
 
 Uses a grid-based approach identical to street_match.py — splits Portugal
-into 0.5° × 0.5° cells (~55 cells) and queries each one individually.
-This avoids Overpass timeouts and rate limiting that occur with a single
-full-country query.
+into 0.5° x 0.5° cells and queries each one individually. Each successful
+cell is cached to data/pois_cache/cell_{s}_{w}.json so that failed cells
+are retried on the next run without re-fetching successful ones.
+
+GitHub Actions preserves data/pois_cache/ between runs via actions/cache,
+exactly like data/osm_cache/ is preserved for street_match.py.
 
 Categories fetched:
   - Schools          (amenity=school)
@@ -15,33 +18,34 @@ Categories fetched:
   - Kindergartens    (amenity=kindergarten)
   - Care homes       (social_facility=nursing_home + assisted_living, merged)
 
-The file is cached and only re-fetched if older than MAX_AGE_DAYS.
-
 Usage:
-    python scripts/fetch_pois.py
+    python scripts/fetch_pois.py              # normal run
+    python scripts/fetch_pois.py --refresh-cache  # re-fetch all cells
 """
 
 import json
 import os
+import sys
 import time
 import urllib.request
 import urllib.parse
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional
 
 # ── Paths ──────────────────────────────────────────────────────────────────
-ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SAVE_PATH = os.path.join(ROOT, 'data', 'pois.geojson')
+ROOT       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SAVE_PATH  = os.path.join(ROOT, 'data', 'pois.geojson')
+CACHE_DIR  = os.path.join(ROOT, 'data', 'pois_cache')
 
 # ── Config ─────────────────────────────────────────────────────────────────
 OVERPASS_URLS = [
-    'https://overpass.kumi.systems/api/interpreter',  # mirror — less busy
-    'https://overpass-api.de/api/interpreter',         # main server fallback
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://overpass-api.de/api/interpreter',
 ]
-MAX_AGE_DAYS = 7    # re-fetch if file is older than this
-TIMEOUT      = 60   # per-cell query timeout (seconds) — small cells are fast
-CELL_SIZE    = 0.5  # degrees — ~55km cells, ~55 cells cover Portugal
-SLEEP_S      = 2    # seconds between cells — polite to the API
+TIMEOUT   = 90    # per-cell query timeout in seconds
+CELL_SIZE = 0.5   # degrees — ~55km cells, ~77 cells cover Portugal bbox
+SLEEP_S   = 5     # seconds between cells
 
 # Portugal mainland bounding box (south, west, north, east)
 PT_SOUTH, PT_WEST, PT_NORTH, PT_EAST = 36.9, -9.5, 42.2, -6.2
@@ -57,7 +61,6 @@ POI_TYPES = {
 
 # ── Grid ───────────────────────────────────────────────────────────────────
 def generate_cells(south, west, north, east, cell_size):
-    """Generate (s, w, n, e) bounding boxes covering the given area."""
     cells = []
     lat = south
     while lat < north:
@@ -69,6 +72,31 @@ def generate_cells(south, west, north, east, cell_size):
             lon = round(lon + cell_size, 4)
         lat = round(lat + cell_size, 4)
     return cells
+
+
+# ── Per-cell cache ─────────────────────────────────────────────────────────
+def cell_cache_path(s, w):
+    """Return path for this cell's cache file."""
+    return os.path.join(CACHE_DIR, f'cell_{s}_{w}.json')
+
+
+def load_cell_cache(s, w) -> Optional[list]:
+    """Return cached elements for this cell, or None if not cached."""
+    path = cell_cache_path(s, w)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_cell_cache(s, w, elements: list):
+    """Save raw OSM elements for this cell to cache."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(cell_cache_path(s, w), 'w', encoding='utf-8') as f:
+        json.dump(elements, f, separators=(',', ':'))
 
 
 # ── Overpass ───────────────────────────────────────────────────────────────
@@ -90,25 +118,24 @@ def build_query(s, w, n, e):
 out center;"""
 
 
-def fetch_cell(query: str, cell_num: int, total: int) -> list:
-    """POST a single cell query to Overpass, trying both endpoints."""
+def fetch_from_overpass(query: str) -> Optional[list]:
+    """POST query to Overpass, trying all mirrors with retries. Returns None on total failure."""
     data    = urllib.parse.urlencode({'data': query}).encode('utf-8')
     headers = {
         'User-Agent':   'estacionamento-abusivo-map/1.0',
         'Content-Type': 'application/x-www-form-urlencoded',
     }
     for url in OVERPASS_URLS:
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 req = urllib.request.Request(url, data=data, headers=headers)
                 with urllib.request.urlopen(req, timeout=TIMEOUT + 15) as resp:
                     return json.loads(resp.read().decode('utf-8')).get('elements', [])
             except Exception as e:
                 wait = 10 + 10 * attempt
-                print(f'\n    ✗ {url} failed: {e} — waiting {wait}s')
+                print(f'\n    ✗ {url} ({e}) — waiting {wait}s')
                 time.sleep(wait)
-    print(f'\n    ✗ Cell {cell_num}/{total} failed on all endpoints — skipping')
-    return []
+    return None
 
 
 # ── Classification ─────────────────────────────────────────────────────────
@@ -153,35 +180,48 @@ def element_to_feature(el: dict, poi_type: str) -> Optional[dict]:
     }
 
 
-# ── Cache check ────────────────────────────────────────────────────────────
-def is_cache_fresh() -> bool:
-    if not os.path.exists(SAVE_PATH):
-        return False
-    mtime = datetime.fromtimestamp(os.path.getmtime(SAVE_PATH), tz=timezone.utc)
-    return datetime.now(tz=timezone.utc) - mtime < timedelta(days=MAX_AGE_DAYS)
-
-
 # ── Main ───────────────────────────────────────────────────────────────────
 def main():
+    refresh = '--refresh-cache' in sys.argv
     print(f'[{datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}] fetch_pois.py starting...')
-
-    if is_cache_fresh():
-        print(f'Cache is fresh (< {MAX_AGE_DAYS} days old). Skipping fetch.')
-        return
+    if refresh:
+        print('--refresh-cache: all cell caches will be ignored and re-fetched.')
 
     cells = generate_cells(PT_SOUTH, PT_WEST, PT_NORTH, PT_EAST, CELL_SIZE)
     print(f'Grid: {len(cells)} cells at {CELL_SIZE}° resolution')
 
-    seen_ids = set()   # (type, id) — deduplication across cell boundaries
-    features = []
-    by_type  = {k: 0 for k in POI_TYPES}
-    skipped  = 0
+    seen_ids  = set()   # (type, id) — deduplication across cell boundaries
+    features  = []
+    by_type   = {k: 0 for k in POI_TYPES}
+    skipped   = 0
+    cached    = 0
+    failed    = 0
 
     for i, (s, w, n, e) in enumerate(cells, 1):
         print(f'  Cell {i:2d}/{len(cells)}: ({s},{w})→({n},{e})', end=' ', flush=True)
-        elements  = fetch_cell(build_query(s, w, n, e), i, len(cells))
-        cell_new  = 0
 
+        # Try cell cache first (unless --refresh-cache)
+        elements = None
+        if not refresh:
+            elements = load_cell_cache(s, w)
+            if elements is not None:
+                print(f'[cached]', end=' ', flush=True)
+                cached += 1
+
+        # Cache miss or refresh — fetch from Overpass
+        if elements is None:
+            elements = fetch_from_overpass(build_query(s, w, n, e))
+            if elements is None:
+                print(f'→ FAILED (will retry next run)')
+                failed += 1
+                if i < len(cells):
+                    time.sleep(SLEEP_S)
+                continue
+            # Save successful fetch to per-cell cache
+            save_cell_cache(s, w, elements)
+
+        # Process elements
+        cell_new = 0
         for el in elements:
             osm_id = (el['type'], el.get('id'))
             if osm_id in seen_ids:
@@ -200,10 +240,15 @@ def main():
             else:
                 skipped += 1
 
-        print(f'→ {cell_new} POIs (total so far: {len(features)})')
+        print(f'→ {cell_new} POIs (total: {len(features)})')
         if i < len(cells):
             time.sleep(SLEEP_S)
 
+    # Warn if any cells failed — they'll be retried next run
+    if failed:
+        print(f'\n⚠ {failed} cell(s) failed — cache gaps will be filled on next run.')
+
+    # Save merged GeoJSON
     geojson = {
         'type':     'FeatureCollection',
         'features': features,
@@ -211,6 +256,9 @@ def main():
             'fetched_at': datetime.now(tz=timezone.utc).isoformat(),
             'total':      len(features),
             'by_type':    by_type,
+            'cells_ok':   len(cells) - failed,
+            'cells_failed': failed,
+            'cells_cached': cached,
             'source':     'OpenStreetMap via Overpass API',
         }
     }
@@ -220,6 +268,7 @@ def main():
         json.dump(geojson, f, ensure_ascii=False, separators=(',', ':'))
 
     print(f'\nDone. Saved {len(features)} POIs → {SAVE_PATH}')
+    print(f'  Cells: {len(cells) - failed} ok, {failed} failed, {cached} from cache')
     print(f'  Skipped: {skipped} (unclassified or missing coordinates)')
     print('  By type:')
     for k, n in by_type.items():
