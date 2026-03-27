@@ -4,12 +4,16 @@ fetch_pois.py
 Fetches Points of Interest relevant to vulnerable road users from the
 Overpass API (OpenStreetMap) and saves them to data/pois.geojson.
 
+Uses a grid-based approach identical to street_match.py — splits Portugal
+into 0.5° × 0.5° cells (~55 cells) and queries each one individually.
+This avoids Overpass timeouts and rate limiting that occur with a single
+full-country query.
+
 Categories fetched:
   - Schools          (amenity=school)
   - Hospitals        (amenity=hospital)
   - Kindergartens    (amenity=kindergarten)
-  - Nursing homes    (social_facility=nursing_home)
-  - Assisted living  (social_facility=assisted_living)
+  - Care homes       (social_facility=nursing_home + assisted_living, merged)
 
 The file is cached and only re-fetched if older than MAX_AGE_DAYS.
 
@@ -31,81 +35,87 @@ SAVE_PATH = os.path.join(ROOT, 'data', 'pois.geojson')
 
 # ── Config ─────────────────────────────────────────────────────────────────
 OVERPASS_URLS = [
-    'https://overpass.kumi.systems/api/interpreter',  # less busy mirror
-    'https://overpass-api.de/api/interpreter',         # main server
+    'https://overpass.kumi.systems/api/interpreter',  # mirror — less busy
+    'https://overpass-api.de/api/interpreter',         # main server fallback
 ]
-MAX_AGE_DAYS  = 7
-TIMEOUT       = 120
+MAX_AGE_DAYS = 7    # re-fetch if file is older than this
+TIMEOUT      = 60   # per-cell query timeout (seconds) — small cells are fast
+CELL_SIZE    = 0.5  # degrees — ~55km cells, ~55 cells cover Portugal
+SLEEP_S      = 2    # seconds between cells — polite to the API
 
 # Portugal mainland bounding box (south, west, north, east)
-BBOX = '36.9,-9.5,42.2,-6.2'
+PT_SOUTH, PT_WEST, PT_NORTH, PT_EAST = 36.9, -9.5, 42.2, -6.2
 
 # POI type definitions
 POI_TYPES = {
-    'school':       {'label_en': 'School',      'label_pt': 'Escola',            'color': '#4363D8'},
-    'hospital':     {'label_en': 'Hospital',    'label_pt': 'Hospital',           'color': '#E6194B'},
-    'kindergarten': {'label_en': 'Kindergarten','label_pt': 'Jardim de infância', 'color': '#F58231'},
-    'care_home':    {'label_en': 'Care home',   'label_pt': 'Lar / residência',   'color': '#3CB44B'},
+    'school':       {'label_en': 'School',       'label_pt': 'Escola',            'color': '#4363D8'},
+    'hospital':     {'label_en': 'Hospital',     'label_pt': 'Hospital',           'color': '#E6194B'},
+    'kindergarten': {'label_en': 'Kindergarten', 'label_pt': 'Jardim de infância', 'color': '#F58231'},
+    'care_home':    {'label_en': 'Care home',    'label_pt': 'Lar / residência',   'color': '#3CB44B'},
 }
 
-# ── Overpass query ─────────────────────────────────────────────────────────
-QUERY = f"""
-[out:json][timeout:{TIMEOUT}];
+
+# ── Grid ───────────────────────────────────────────────────────────────────
+def generate_cells(south, west, north, east, cell_size):
+    """Generate (s, w, n, e) bounding boxes covering the given area."""
+    cells = []
+    lat = south
+    while lat < north:
+        lon = west
+        cell_n = min(round(lat + cell_size, 4), north)
+        while lon < east:
+            cell_e = min(round(lon + cell_size, 4), east)
+            cells.append((round(lat, 4), round(lon, 4), cell_n, cell_e))
+            lon = round(lon + cell_size, 4)
+        lat = round(lat + cell_size, 4)
+    return cells
+
+
+# ── Overpass ───────────────────────────────────────────────────────────────
+def build_query(s, w, n, e):
+    bbox = f'{s},{w},{n},{e}'
+    return f"""[out:json][timeout:{TIMEOUT}];
 (
-  node["amenity"="school"]["name"]({BBOX});
-  way["amenity"="school"]["name"]({BBOX});
-  node["amenity"="hospital"]["name"]({BBOX});
-  way["amenity"="hospital"]["name"]({BBOX});
-  node["amenity"="kindergarten"]["name"]({BBOX});
-  way["amenity"="kindergarten"]["name"]({BBOX});
-  node["amenity"="social_facility"]["social_facility"="nursing_home"]["name"]({BBOX});
-  way["amenity"="social_facility"]["social_facility"="nursing_home"]["name"]({BBOX});
-  node["amenity"="social_facility"]["social_facility"="assisted_living"]["name"]({BBOX});
-  way["amenity"="social_facility"]["social_facility"="assisted_living"]["name"]({BBOX});
+  node["amenity"="school"]["name"]({bbox});
+  way["amenity"="school"]["name"]({bbox});
+  node["amenity"="hospital"]["name"]({bbox});
+  way["amenity"="hospital"]["name"]({bbox});
+  node["amenity"="kindergarten"]["name"]({bbox});
+  way["amenity"="kindergarten"]["name"]({bbox});
+  node["amenity"="social_facility"]["social_facility"="nursing_home"]["name"]({bbox});
+  way["amenity"="social_facility"]["social_facility"="nursing_home"]["name"]({bbox});
+  node["amenity"="social_facility"]["social_facility"="assisted_living"]["name"]({bbox});
+  way["amenity"="social_facility"]["social_facility"="assisted_living"]["name"]({bbox});
 );
-out center;
-""".strip()
+out center;"""
 
 
-def is_cache_fresh() -> bool:
-    """Return True if the cached file exists and is younger than MAX_AGE_DAYS."""
-    if not os.path.exists(SAVE_PATH):
-        return False
-    mtime = datetime.fromtimestamp(os.path.getmtime(SAVE_PATH), tz=timezone.utc)
-    age   = datetime.now(tz=timezone.utc) - mtime
-    return age < timedelta(days=MAX_AGE_DAYS)
-
-
-def fetch_overpass(query: str) -> dict:
-    """POST query to Overpass API, trying multiple mirrors with retries."""
-    data = urllib.parse.urlencode({'data': query}).encode('utf-8')
+def fetch_cell(query: str, cell_num: int, total: int) -> list:
+    """POST a single cell query to Overpass, trying both endpoints."""
+    data    = urllib.parse.urlencode({'data': query}).encode('utf-8')
     headers = {
         'User-Agent':   'estacionamento-abusivo-map/1.0',
         'Content-Type': 'application/x-www-form-urlencoded',
     }
-    attempt = 0
     for url in OVERPASS_URLS:
-        for retry in range(2):  # 2 tries per endpoint
-            attempt += 1
+        for attempt in range(2):
             try:
-                print(f'  Attempt {attempt}: {url}')
                 req = urllib.request.Request(url, data=data, headers=headers)
-                with urllib.request.urlopen(req, timeout=TIMEOUT + 30) as resp:
-                    return json.loads(resp.read().decode('utf-8'))
+                with urllib.request.urlopen(req, timeout=TIMEOUT + 15) as resp:
+                    return json.loads(resp.read().decode('utf-8')).get('elements', [])
             except Exception as e:
-                print(f'  Failed: {e}')
-                wait = 30 * attempt
-                print(f'  Waiting {wait}s before next attempt...')
+                wait = 10 + 10 * attempt
+                print(f'\n    ✗ {url} failed: {e} — waiting {wait}s')
                 time.sleep(wait)
-    raise RuntimeError('All Overpass API endpoints failed.')
+    print(f'\n    ✗ Cell {cell_num}/{total} failed on all endpoints — skipping')
+    return []
 
 
+# ── Classification ─────────────────────────────────────────────────────────
 def classify_element(el: dict) -> Optional[str]:
-    """Return the POI type key for an OSM element, or None if unrecognised."""
     tags    = el.get('tags', {})
     amenity = tags.get('amenity', '')
     sf      = tags.get('social_facility', '')
-
     if amenity == 'school':       return 'school'
     if amenity == 'hospital':     return 'hospital'
     if amenity == 'kindergarten': return 'kindergarten'
@@ -115,10 +125,7 @@ def classify_element(el: dict) -> Optional[str]:
 
 
 def element_to_feature(el: dict, poi_type: str) -> Optional[dict]:
-    """Convert an OSM element to a GeoJSON feature."""
     tags = el.get('tags', {})
-
-    # Nodes have lat/lon directly; ways have a computed center
     if el['type'] == 'node':
         lat, lon = el.get('lat'), el.get('lon')
     elif el['type'] == 'way':
@@ -126,32 +133,35 @@ def element_to_feature(el: dict, poi_type: str) -> Optional[dict]:
         lat, lon = center.get('lat'), center.get('lon')
     else:
         return None
-
     if lat is None or lon is None:
         return None
-
-    type_info = POI_TYPES[poi_type]
-
+    info = POI_TYPES[poi_type]
     return {
         'type': 'Feature',
-        'geometry': {
-            'type': 'Point',
-            'coordinates': [round(lon, 6), round(lat, 6)]
-        },
+        'geometry': {'type': 'Point', 'coordinates': [round(lon, 6), round(lat, 6)]},
         'properties': {
-            'osm_id':     el.get('id'),
-            'osm_type':   el['type'],
-            'poi_type':   poi_type,
-            'name':       tags.get('name', ''),
-            'label_en':   type_info['label_en'],
-            'label_pt':   type_info['label_pt'],
-            'color':      type_info['color'],
-            'address':    tags.get('addr:street', ''),
-            'operator':   tags.get('operator', ''),
+            'osm_id':   el.get('id'),
+            'osm_type': el['type'],
+            'poi_type': poi_type,
+            'name':     tags.get('name', ''),
+            'label_en': info['label_en'],
+            'label_pt': info['label_pt'],
+            'color':    info['color'],
+            'address':  tags.get('addr:street', ''),
+            'operator': tags.get('operator', ''),
         }
     }
 
 
+# ── Cache check ────────────────────────────────────────────────────────────
+def is_cache_fresh() -> bool:
+    if not os.path.exists(SAVE_PATH):
+        return False
+    mtime = datetime.fromtimestamp(os.path.getmtime(SAVE_PATH), tz=timezone.utc)
+    return datetime.now(tz=timezone.utc) - mtime < timedelta(days=MAX_AGE_DAYS)
+
+
+# ── Main ───────────────────────────────────────────────────────────────────
 def main():
     print(f'[{datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}] fetch_pois.py starting...')
 
@@ -159,25 +169,40 @@ def main():
         print(f'Cache is fresh (< {MAX_AGE_DAYS} days old). Skipping fetch.')
         return
 
-    print('Fetching POI data from Overpass API...')
-    raw = fetch_overpass(QUERY)
+    cells = generate_cells(PT_SOUTH, PT_WEST, PT_NORTH, PT_EAST, CELL_SIZE)
+    print(f'Grid: {len(cells)} cells at {CELL_SIZE}° resolution')
 
-    elements  = raw.get('elements', [])
-    features  = []
-    skipped   = 0
-    by_type   = {k: 0 for k in POI_TYPES}
+    seen_ids = set()   # (type, id) — deduplication across cell boundaries
+    features = []
+    by_type  = {k: 0 for k in POI_TYPES}
+    skipped  = 0
 
-    for el in elements:
-        poi_type = classify_element(el)
-        if not poi_type:
-            skipped += 1
-            continue
-        feat = element_to_feature(el, poi_type)
-        if feat:
-            features.append(feat)
-            by_type[poi_type] += 1
-        else:
-            skipped += 1
+    for i, (s, w, n, e) in enumerate(cells, 1):
+        print(f'  Cell {i:2d}/{len(cells)}: ({s},{w})→({n},{e})', end=' ', flush=True)
+        elements  = fetch_cell(build_query(s, w, n, e), i, len(cells))
+        cell_new  = 0
+
+        for el in elements:
+            osm_id = (el['type'], el.get('id'))
+            if osm_id in seen_ids:
+                continue
+            seen_ids.add(osm_id)
+
+            poi_type = classify_element(el)
+            if not poi_type:
+                skipped += 1
+                continue
+            feat = element_to_feature(el, poi_type)
+            if feat:
+                features.append(feat)
+                by_type[poi_type] += 1
+                cell_new += 1
+            else:
+                skipped += 1
+
+        print(f'→ {cell_new} POIs (total so far: {len(features)})')
+        if i < len(cells):
+            time.sleep(SLEEP_S)
 
     geojson = {
         'type':     'FeatureCollection',
@@ -194,7 +219,7 @@ def main():
     with open(SAVE_PATH, 'w', encoding='utf-8') as f:
         json.dump(geojson, f, ensure_ascii=False, separators=(',', ':'))
 
-    print(f'\nSaved {len(features)} POIs → {SAVE_PATH}')
+    print(f'\nDone. Saved {len(features)} POIs → {SAVE_PATH}')
     print(f'  Skipped: {skipped} (unclassified or missing coordinates)')
     print('  By type:')
     for k, n in by_type.items():
