@@ -535,10 +535,7 @@
   padding:10px 14px;font-size:0.68rem;color:#ccc;z-index:5;line-height:2">
   <div style="font-weight:700;margin-bottom:4px;font-size:0.72rem;text-transform:uppercase;
     letter-spacing:0.5px;color:#aaa" data-i18n="poi_legend_title">Sensitive locations</div>
-  <div style="display:flex;align-items:center;gap:6px;margin:2px 0"><img src="data:image/svg+xml,${encodeURIComponent('<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\'><path fill=\'#ff0303\' d=\'M11.297 2.138c.357-.388 1.017-.299 1.271.159 1.419 2.078 2.691 4.251 4.023 6.383 2.3 3.796 4.732 7.515 6.912 11.383.562.817.172 1.896-.745 2.223H1.289C.82 22.09.281 21.818.176 21.266c-.239-.801.347-1.503.693-2.171 2.897-4.903 5.876-9.753 8.806-14.636.508-.793.946-1.653 1.622-2.321z\'/></svg>')}" width="16" height="16"> <span data-i18n="poi_school">Schools</span></div>
-  <div style="display:flex;align-items:center;gap:6px;margin:2px 0"><img src="data:image/svg+xml,${encodeURIComponent('<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\'><path fill=\'#005598\' d=\'M1.474.724C8.406.674 15.343.717 22.277.702c.568-.054 1.101.451 1.063 1.023v20.618c.017.534-.461 1.019-.998.999-6.872.004-13.744.001-20.617.001-.543.03-1.045-.45-1.027-.994-.001-6.877-.002-13.753 0-20.63a.997.997 0 0 1 .775-.996z\'/></svg>')}" width="16" height="16"> <span data-i18n="poi_hospital">Hospitals</span></div>
-  <div style="display:flex;align-items:center;gap:6px;margin:2px 0"><img src="data:image/svg+xml,${encodeURIComponent('<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\'><path fill=\'#ec1d24\' d=\'M11.719 1.333h.596c.475.138.915.423 1.155.866 3.427 5.939 6.844 11.882 10.271 17.819.138.244.258.494.365.752v.572a1.838 1.838 0 0 1-1.287 1.324H1.297C.68 22.517.203 22.038 0 21.444v-.704c.102-.25.22-.494.351-.729 3.411-5.913 6.82-11.828 10.226-17.744.238-.453.665-.766 1.142-.934z\'/></svg>')}" width="16" height="16"> <span data-i18n="poi_kindergarten">Kindergartens</span></div>
-  <div style="display:flex;align-items:center;gap:6px;margin:2px 0"><img src="data:image/svg+xml,${encodeURIComponent('<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\'><path fill=\'#04559b\' d=\'M0 3h23.953v18H0V3z\'/></svg>')}" width="16" height="16"> <span data-i18n="poi_care_home">Care homes</span></div>
+  <div id="poi-legend-items"></div>
 </div>
 
 <!-- ── Map ───────────────────────────────────────────────────────────────── -->
@@ -1326,7 +1323,23 @@ const POI_SVGS = {
   care_home: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path fill="#04559b" d="M0 3h23.953v18H0V3zm11.531 1.902c-1.423.419-.625 2.753.773 2.179 1.429-.419.626-2.758-.772-2.179zm-.913 2.762c-.431.295-.419.879-.337 1.338.19 1.094.271 2.203.414 3.304.065.443.193.992.677 1.15 1.258.35 2.648-.091 3.877.186.569 1.244.679 2.681 1.187 3.962.252.479.833.599 1.328.598-.57-1.325-.988-2.714-1.18-4.146-.11-.575-.182-1.354-.835-1.566-.98-.288-2.014-.128-3.016-.095-.04-.309-.078-.616-.116-.925 1.115-.014 2.23.014 3.346-.016-.632-1.305-2.316-.736-3.457-.795-.118-.796-.191-1.601-.322-2.395-.106-.682-1.027-1.028-1.566-.598zm-3.456 7.383c-.051 2.367 2.53 4.266 4.779 3.573 1.909-.47 3.21-2.57 2.702-4.487l-.958-.003c.419 1.331-.251 2.87-1.54 3.421-1.502.779-3.535-.153-3.936-1.793-.433-1.443.468-3.074 1.91-3.498l-.116-.931c-1.628.452-2.911 1.99-2.839 3.718z"/><path fill="#fff" d="M11.531 4.902c1.399-.58 2.201 1.759.773 2.179-1.397.574-2.195-1.759-.772-2.179zM10.618 7.664c.539-.43 1.46-.083 1.566.598.13.795.204 1.599.322 2.396 1.141.059 2.824-.51 3.457.795-1.115.03-2.231.002-3.347.016l.116.925c1.002-.032 2.037-.193 3.016.095.653.212.726.991.835 1.566.193 1.432.611 2.821 1.181 4.146-.495.002-1.076-.119-1.328-.598-.508-1.279-.618-2.717-1.187-3.961-1.23-.277-2.619.164-3.877-.186-.485-.157-.612-.706-.677-1.15-.143-1.101-.224-2.209-.414-3.304-.082-.459-.094-1.043.338-1.338z"/><path fill="#fff" d="M7.162 15.047c-.072-1.728 1.211-3.265 2.839-3.718.04.31.078.621.116.931-1.442.424-2.343 2.055-1.909 3.498.401 1.639 2.434 2.572 3.936 1.793 1.29-.551 1.961-2.09 1.54-3.422l.958.003c.508 1.918-.792 4.018-2.702 4.487-2.249.693-4.83-1.206-4.779-3.573z"/></svg>`,
 };
 
+// Infraction types relevant near each POI type — used for breakdown in popup
+const POI_RELEVANT_TYPES = {
+  school:       ['passeios', 'na_passadeira', 'passadeiras5m', 'ciclovia', 'paragem_tp', 'segunda_fila'],
+  kindergarten: ['passeios', 'na_passadeira', 'passadeiras5m', 'ciclovia', 'paragem_tp', 'segunda_fila'],
+  hospital:     ['passeios', 'na_passadeira', 'passadeiras5m', 'paragem_tp', 'segunda_fila', 'deficiente'],
+  care_home:    ['passeios', 'na_passadeira', 'passadeiras5m', 'deficiente'],
+};
+
 function loadPoiIcons() {
+  const legendItems = document.getElementById('poi-legend-items');
+  const entries = [
+    { type: 'school',       labelKey: 'poi_school' },
+    { type: 'hospital',     labelKey: 'poi_hospital' },
+    { type: 'kindergarten', labelKey: 'poi_kindergarten' },
+    { type: 'care_home',    labelKey: 'poi_care_home' },
+  ];
+
   return Promise.all(Object.entries(POI_SVGS).map(([type, svg]) =>
     new Promise((resolve) => {
       const img  = new Image(48, 48);
@@ -1335,7 +1348,31 @@ function loadPoiIcons() {
       img.onload = () => {
         if (!map.hasImage(`poi-${type}`))
           map.addImage(`poi-${type}`, img, { pixelRatio: 2 });
-        URL.revokeObjectURL(url);
+
+        // Build legend row — use a fresh Image so we can track its load
+        if (legendItems) {
+          const entry = entries.find(e => e.type === type);
+          if (entry) {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:2px 0';
+            const icon = new Image(16, 16);
+            icon.style.flexShrink = '0';
+            icon.onload  = () => URL.revokeObjectURL(url);
+            icon.onerror = () => URL.revokeObjectURL(url);
+            icon.src = url;
+            const label = document.createElement('span');
+            label.dataset.i18n = entry.labelKey;
+            label.textContent  = T[lang][entry.labelKey] || entry.labelKey;
+            row.appendChild(icon);
+            row.appendChild(label);
+            legendItems.appendChild(row);
+          } else {
+            URL.revokeObjectURL(url);
+          }
+        } else {
+          URL.revokeObjectURL(url);
+        }
+
         resolve();
       };
       img.onerror = () => { URL.revokeObjectURL(url); resolve(); };
@@ -1388,11 +1425,11 @@ async function initPoiLayer() {
   map.setLayoutProperty('pois-circle', 'visibility', 'none');
   map.setLayoutProperty('pois-labels', 'visibility', 'none');
 
-  // Click → popup
+  // Click → popup with per-type breakdown
   map.on('click', 'pois-circle', e => {
     const p        = e.features[0].properties;
     const coords   = e.features[0].geometry.coordinates;
-    const count    = countInfractionsNear(coords[1], coords[0], 500);
+    const relevant = POI_RELEVANT_TYPES[p.poi_type] || [];
     const typeName = lang === 'pt' ? p.label_pt : p.label_en;
     const dot      = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px;vertical-align:middle"></span>`;
     const hours    = p.opening_hours
@@ -1400,17 +1437,46 @@ async function initPoiLayer() {
     const address  = p.address
       ? `<div style="font-size:0.68rem;color:#888;margin-top:2px">📍 ${p.address}</div>` : '';
 
-    new maplibregl.Popup({ closeButton: true, maxWidth: '260px' })
+    // Count total and per relevant type within 50m
+    const total = countInfractionsNear(coords[1], coords[0], 50, []);
+
+    // Build per-type breakdown rows — only show types with count > 0
+    const breakdownRows = relevant
+      .map(type => ({
+        label: LABELS[lang][type] || type,
+        count: countInfractionsNear(coords[1], coords[0], 50, [type])
+      }))
+      .filter(r => r.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .map(r => `
+        <div style="display:flex;justify-content:space-between;align-items:center;
+          font-size:0.68rem;margin-top:3px;color:#bbb">
+          <span>${r.label}</span>
+          <span style="font-weight:700;color:#e63946;margin-left:8px">${r.count}</span>
+        </div>`)
+      .join('');
+
+    const breakdownSection = breakdownRows
+      ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #1a1a2e">
+           <div style="font-size:0.62rem;text-transform:uppercase;letter-spacing:0.5px;
+             color:#555;margin-bottom:3px">
+             ${lang === 'pt' ? 'denúncias relevantes' : 'relevant infractions'}
+           </div>
+           ${breakdownRows}
+         </div>` : '';
+
+    new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
       .setLngLat(coords)
       .setHTML(`
         <div style="font-family:inherit">
           <div style="font-weight:700;font-size:0.85rem;margin-bottom:3px">${p.name}</div>
-          <div style="font-size:0.72rem;color:#aaa;margin-bottom:6px">${dot}${typeName}</div>
+          <div style="font-size:0.72rem;color:#aaa;margin-bottom:4px">${dot}${typeName}</div>
           ${address}${hours}
           <div style="font-size:0.78rem;margin-top:8px;padding-top:8px;border-top:1px solid #2a2a3a">
-            <span style="font-weight:700;color:#e63946">${count}</span>
-            <span style="color:#aaa"> ${lang === 'pt' ? 'denúncias num raio de 500m' : 'reports within 500m'}</span>
+            <span style="font-weight:700;color:#e63946">${total}</span>
+            <span style="color:#aaa"> ${lang === 'pt' ? 'denúncias num raio de 50m' : 'reports within 50m'}</span>
           </div>
+          ${breakdownSection}
         </div>`)
       .addTo(map);
     e._poiClick = true;
@@ -1431,13 +1497,15 @@ function togglePois() {
   if (legend) legend.style.display = poiVisible ? '' : 'none';
 }
 
-// Count infraction reports within `radiusM` metres of a lat/lon point
-function countInfractionsNear(lat, lon, radiusM) {
+// Count infraction reports within `radiusM` metres of a lat/lon point.
+// If `types` is a non-empty array, only count those infraction types.
+function countInfractionsNear(lat, lon, radiusM, types = []) {
   if (!allData) return 0;
   const features = getFilteredFeatures();
   let count = 0;
   for (const f of features) {
     const [fLon, fLat] = f.geometry.coordinates;
+    if (types.length && !types.includes(f.properties.infraction_type)) continue;
     if (haversineMetres(lat, lon, fLat, fLon) <= radiusM) count++;
   }
   return count;
