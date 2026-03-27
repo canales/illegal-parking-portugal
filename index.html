@@ -1939,7 +1939,7 @@ function computeMuniTrends(typeFilter) {
                     : changePct < -10 ? 'decreasing'
                     : 'stable';
 
-    results.push({ muni, changePct, direction, recentRate, total });
+    results.push({ muni, changePct, direction, recentRate, total: histTotal + recentTotal });
   });
 
   // Sort: increasing (worst) first, then stable, then decreasing (improving)
