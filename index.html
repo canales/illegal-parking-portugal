@@ -1383,7 +1383,12 @@ function loadPoiIcons() {
 
 async function initPoiLayer() {
   if (!poiData) return;
-  map.addSource('pois', { type: 'geojson', data: poiData });
+
+  // Pre-filter: only keep POIs with ≥1 relevant infraction within 50m
+  const filtered = filterPoiByRelevantInfractions(poiData, 50);
+  console.log(`[POIs] ${poiData.features.length} total → ${filtered.features.length} with relevant infractions within 50m`);
+
+  map.addSource('pois', { type: 'geojson', data: filtered });
 
   await loadPoiIcons();
 
@@ -1437,7 +1442,7 @@ async function initPoiLayer() {
     const address  = p.address
       ? `<div style="font-size:0.68rem;color:#888;margin-top:2px">📍 ${p.address}</div>` : '';
 
-    // Count total and per relevant type within 50m
+    // Count per relevant type within 50m
     const total = countInfractionsNear(coords[1], coords[0], 50, []);
 
     // Build per-type breakdown rows — only show types with count > 0
@@ -1456,6 +1461,9 @@ async function initPoiLayer() {
         </div>`)
       .join('');
 
+    const relevantTotal = relevant.reduce((s, type) =>
+      s + countInfractionsNear(coords[1], coords[0], 50, [type]), 0);
+
     const breakdownSection = breakdownRows
       ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #1a1a2e">
            <div style="font-size:0.62rem;text-transform:uppercase;letter-spacing:0.5px;
@@ -1473,8 +1481,9 @@ async function initPoiLayer() {
           <div style="font-size:0.72rem;color:#aaa;margin-bottom:4px">${dot}${typeName}</div>
           ${address}${hours}
           <div style="font-size:0.78rem;margin-top:8px;padding-top:8px;border-top:1px solid #2a2a3a">
-            <span style="font-weight:700;color:#e63946">${total}</span>
-            <span style="color:#aaa"> ${lang === 'pt' ? 'denúncias num raio de 50m' : 'reports within 50m'}</span>
+            <span style="font-weight:700;color:#e63946">${relevantTotal}</span>
+            <span style="color:#aaa"> ${lang === 'pt' ? 'denúncias relevantes num raio de 50m' : 'relevant reports within 50m'}</span>
+            ${total !== relevantTotal ? `<span style="color:#555;font-size:0.68rem"> (${total} ${lang === 'pt' ? 'total' : 'total'})</span>` : ''}
           </div>
           ${breakdownSection}
         </div>`)
@@ -1502,13 +1511,66 @@ function togglePois() {
 function countInfractionsNear(lat, lon, radiusM, types = []) {
   if (!allData) return 0;
   const features = getFilteredFeatures();
+  // bbox pre-filter: 50m ≈ 0.00045°, use 0.001° margin to be safe
+  const margin = radiusM / 111000 + 0.001;
   let count = 0;
   for (const f of features) {
     const [fLon, fLat] = f.geometry.coordinates;
+    if (Math.abs(fLat - lat) > margin || Math.abs(fLon - lon) > margin) continue;
     if (types.length && !types.includes(f.properties.infraction_type)) continue;
     if (haversineMetres(lat, lon, fLat, fLon) <= radiusM) count++;
   }
   return count;
+}
+
+// Build a grid-based spatial index of all infractions for fast proximity lookup.
+// Grid cell size 0.01° (~1km). Returns a Map of "latCell,lonCell" → feature array.
+function buildInfractionIndex(features) {
+  const CELL = 0.01;
+  const idx  = new Map();
+  for (const f of features) {
+    const [lon, lat] = f.geometry.coordinates;
+    const key = `${Math.floor(lat / CELL)},${Math.floor(lon / CELL)}`;
+    if (!idx.has(key)) idx.set(key, []);
+    idx.get(key).push(f);
+  }
+  return idx;
+}
+
+// Return only POIs that have ≥1 relevant infraction within radiusM metres.
+// Uses a spatial index for performance (~100ms for 3800 POIs × 16000 infractions).
+function filterPoiByRelevantInfractions(poi, radiusM) {
+  if (!allData) return poi;
+  const allFeatures = allData.features;
+  const CELL        = 0.01;
+  const margin      = Math.ceil((radiusM / 111000) / CELL) + 1;
+  const idx         = buildInfractionIndex(allFeatures);
+
+  const kept = poi.features.filter(f => {
+    const [lon, lat] = f.geometry.coordinates;
+    const relevant   = POI_RELEVANT_TYPES[f.properties.poi_type] || [];
+    if (!relevant.length) return false;
+
+    const cLat = Math.floor(lat / CELL);
+    const cLon = Math.floor(lon / CELL);
+
+    // Check surrounding grid cells
+    for (let dy = -margin; dy <= margin; dy++) {
+      for (let dx = -margin; dx <= margin; dx++) {
+        const key  = `${cLat + dy},${cLon + dx}`;
+        const cell = idx.get(key);
+        if (!cell) continue;
+        for (const inf of cell) {
+          if (!relevant.includes(inf.properties.infraction_type)) continue;
+          const [iLon, iLat] = inf.geometry.coordinates;
+          if (haversineMetres(lat, lon, iLat, iLon) <= radiusM) return true;
+        }
+      }
+    }
+    return false;
+  });
+
+  return { ...poi, features: kept };
 }
 
 function haversineMetres(lat1, lon1, lat2, lon2) {
