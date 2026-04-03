@@ -360,6 +360,38 @@
       text-align: center; cursor: pointer; transition: all 0.15s;
     }
     #streets-export:hover { background: #0d1f18; border-color: #B0E4CC; }
+
+    /* ── Sensitive locations panel ──────────────────────────────────────── */
+    #poi-panel {
+      background: rgba(13,13,22,0.92); border: 1px solid #F58231;
+      border-radius: 8px; overflow: hidden;
+    }
+    #poi-panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 11px; cursor: pointer; user-select: none;
+    }
+    #poi-panel-header span { font-size: 0.76rem; font-weight: 700; color: #ccc; text-transform: uppercase; letter-spacing: 0.6px; }
+    #poi-panel-toggle { font-size: 0.65rem; color: #555; transition: transform 0.2s; }
+    #poi-panel.collapsed #poi-panel-toggle { transform: rotate(-90deg); }
+    #poi-panel-body { padding: 6px 11px 10px; }
+    #poi-panel.collapsed #poi-panel-body { display: none; }
+    #poi-type-filter {
+      width: 100%; background: #111; border: 1px solid #2a2a3a;
+      color: #aaa; padding: 3px 6px; border-radius: 4px;
+      font-size: 0.68rem; margin-bottom: 6px;
+    }
+    #poi-rankings-list { max-height: 260px; overflow-y: auto; }
+    #poi-rankings-list::-webkit-scrollbar { width: 3px; }
+    #poi-rankings-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    .poi-rank-row { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; cursor: pointer; }
+    .poi-rank-row:hover .poi-rank-name { color: #F58231; }
+    .poi-rank-num  { font-size: 0.66rem; color: #444; min-width: 14px; text-align: right; flex-shrink: 0; }
+    .poi-rank-wrap { flex: 1; min-width: 0; }
+    .poi-rank-name { font-size: 0.74rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; transition: color 0.15s; }
+    .poi-rank-meta { display: flex; gap: 4px; align-items: center; }
+    .poi-rank-bar-bg { flex: 1; height: 3px; background: #1e1e2e; border-radius: 2px; overflow: hidden; }
+    .poi-rank-bar  { height: 100%; background: #F58231; border-radius: 2px; }
+    .poi-rank-val  { font-size: 0.72rem; color: #F58231; font-weight: 700; flex-shrink: 0; }
     #rankings-export {
       display: block; width: 100%; margin-top: 10px;
       padding: 7px 0; background: #111; border: 1px solid #2a2a3a;
@@ -522,7 +554,7 @@
     <span id="opacity-value">85%</span>
   </label>
   <label id="poi-wrap">
-    <button id="btn-pois" class="toggle-btn" onclick="togglePois()" data-i18n="poi_toggle">Sensitive locations</button>
+    <button id="btn-pois" class="toggle-btn" onclick="togglePois(); if(poiVisible) document.getElementById('poi-panel').classList.remove('collapsed');" data-i18n="poi_toggle">Sensitive locations</button>
   </label>
 </div>
 
@@ -637,9 +669,23 @@
         <button id="streets-export" onclick="exportStreetsCSV()" data-i18n="streets_export">⬇ Download CSV</button>
       </div>
     </div>
+    <!-- Sensitive locations panel -->
+    <div id="poi-panel" class="collapsed">
+      <div id="poi-panel-header" onclick="togglePoiPanel()">
+        <span data-i18n="poi_panel_title">Sensitive locations</span>
+        <span id="poi-panel-toggle">▾</span>
+      </div>
+      <div id="poi-panel-body">
+        <select id="poi-type-filter" onchange="renderPoiRankings()">
+          <option value="all" data-i18n="filter_all">All</option>
+          <option value="kindergarten" data-i18n="poi_kindergarten">Schools & Kindergartens</option>
+          <option value="hospital" data-i18n="poi_hospital">Hospitals</option>
+          <option value="care_home" data-i18n="poi_care_home">Care homes</option>
+        </select>
+        <div id="poi-rankings-list"></div>
+      </div>
+    </div>
   </div>
-
-  <!-- Timeline bar -->
   <div id="timeline-bar">
     <button id="play-btn" onclick="togglePlay()" title="Play / Pause">▶</button>
     <div id="timeline-wrap">
@@ -721,6 +767,7 @@ const T = {
     perkm_tooltip:    'Total reports divided by the municipality\'s road network length in km, based on OpenStreetMap data. Normalises for city size.',
     rankings_export: '⬇ Download CSV',
     streets_rank_title: 'Street rankings',
+    poi_panel_title:    'Sensitive locations',
     streets_muni_all:   '— Select municipality —',
     streets_export:     '⬇ Download CSV',
     streets_no_data:    'Select a municipality above',
@@ -781,6 +828,7 @@ const T = {
     perkm_tooltip:    'Total de denúncias dividido pelo comprimento da rede viária do município em km, com base em dados OpenStreetMap. Normaliza pelo tamanho da cidade.',
     rankings_export: '⬇ Descarregar CSV',
     streets_rank_title: 'Ranking de ruas',
+    poi_panel_title:    'Locais sensíveis',
     streets_muni_all:   '— Selecionar município —',
     streets_export:     '⬇ Descarregar CSV',
     streets_no_data:    'Selecione um município acima',
@@ -1100,7 +1148,7 @@ map.on('load', async () => {
     console.warn('[POIs] Failed to load pois.geojson:', poisRes.reason);
   }
 
-  initAllLayers();
+  await initAllLayers();
   updateStats();
   if (allData) await initRankings();
   if (streetData) initStreetRankings();
@@ -1120,7 +1168,7 @@ map.on('load', async () => {
 });
 
 // ── Re-add all layers (called on initial load and after every style swap) ──
-function initAllLayers() {
+async function initAllLayers() {
   // Defensively remove any leftover sources/layers before adding.
   // After setStyle() MapLibre clears them, but if there's a race condition
   // this prevents "source already exists" errors that silently abort the function.
@@ -1133,7 +1181,7 @@ function initAllLayers() {
 
   if (allData)    { initPointsLayers(); initHexLayer(); }
   if (streetData) { initStreetLayers(); }
-  if (poiData)    { initPoiLayer(); }
+  if (poiData)    { await initPoiLayer(); renderPoiRankings(); }
   initMunioBoundaryLayer();
   applyAllFilters();
   setView(currentView);
@@ -1310,7 +1358,7 @@ const POI_COLORS = {
 const POI_SVGS = {
   kindergarten: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path fill="#ec1d24" d="M11.719 1.333h.596c.475.138.915.423 1.155.866 3.427 5.939 6.844 11.882 10.271 17.819.138.244.258.494.365.752v.572a1.838 1.838 0 0 1-1.287 1.324H1.297C.68 22.517.203 22.038 0 21.444v-.704c.102-.25.22-.494.351-.729 3.411-5.913 6.82-11.828 10.226-17.744.238-.453.665-.766 1.142-.934zM2.513 20.536c6.353.003 12.706.004 19.059-.001a9684.15 9684.15 0 0 0-9.528-16.527C8.86 9.513 5.688 15.026 2.512 20.536z"/><path fill="#fff" d="M2.513 20.536c3.176-5.51 6.347-11.023 9.532-16.528 3.18 5.506 6.358 11.015 9.528 16.527-6.353.004-12.706.004-19.059.001zm8.531-13.34c-.499.515-.094 1.188.199 1.687-.741.26-1.772.548-1.828 1.494-.387 1.352-.353 2.748-.308 4.135.152.417.82.196.702-.226-.267-1.114.004-2.297.64-3.237-.076 1.074-.213 2.143-.288 3.217.012 1.605.26 3.196.456 4.785.051.251-.023.498-.089.738.046.018.138.055.182.075l.57-.546c-.135-1.518-.035-3.047.122-4.559.404 1.452.243 2.972.377 4.455.26.297.596.599 1.009.636a11.626 11.626 0 0 0-.312-.556c.268-2.708.458-5.419.3-8.141.414.995.776 2.009 1.188 3.004l-.159.316c.414.319.883.555 1.367.748-.166.833-.474 1.642-.565 2.486.412.451.488 1.047.556 1.632a6.663 6.663 0 0 0-.264.569c.251-.116.487-.257.717-.407.007-.555-.017-1.108.034-1.66.532.586.158 1.672 1.02 2.002-.199-.805-.112-1.644-.053-2.46-.016-.559-.267-1.174.065-1.687.13.388.192.795.258 1.198-.074.129-.147.26-.22.392.217.074.609.17.639-.166-.004-.964.18-2.309-.908-2.773.163-.305.405-.698.122-1.012-.263-.405-.917-.336-1.108.1-.22.345.104.671.199.996-.248.042-.5.051-.749.059a2.92 2.92 0 0 0-.312-.487c-.36-1.362-.651-2.742-.981-4.111-.096-.667-.901-.749-1.403-.988.201-.444.598-.931.343-1.436-.233-.587-1.105-.742-1.52-.267z"/></svg>`,
 
-  hospital: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path fill="#005598" d="M1.474.724C8.406.674 15.343.717 22.277.702c.568-.054 1.101.451 1.063 1.023v20.618c.017.534-.461 1.019-.998.999-6.872.004-13.744.001-20.617.001-.543.03-1.045-.45-1.027-.994-.001-6.877-.002-13.753 0-20.63a.997.997 0 0 1 .775-.996zm2.487 1.385c.023 6.609 0 13.219.012 19.828 1.299.005 2.598.003 3.897.001.003-2.901-.001-5.803.002-8.704 2.739-.002 5.478-.003 8.217 0 .004 2.899.002 5.799.001 8.697 1.3.017 2.601.005 3.901.007.001-6.617.003-13.233-.001-19.85-1.3.003-2.599.001-3.899.001-.001 2.39.002 4.781-.001 7.171-2.739.001-5.479.006-8.218-.002-.006-2.39.01-4.78-.008-7.17-1.3.014-2.603-.024-3.902.019z"/></svg>`,
+  hospital: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="24" height="24"><style>.st0{fill:#FFFFFF;stroke:#000000;stroke-width:50;}.st3{fill:#FF0000;}</style><path class="st0" d="M25,475V150L250,35l225,115v325H25z"/><path class="st3" d="M138.3,422.7V146.4h55.8v108.8h109.3V146.4h55.8v276.3h-55.8V301.9H194.1v120.8H138.3z"/></svg>`,
 
   care_home: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path fill="#04559b" d="M0 3h23.953v18H0V3zm11.531 1.902c-1.423.419-.625 2.753.773 2.179 1.429-.419.626-2.758-.772-2.179zm-.913 2.762c-.431.295-.419.879-.337 1.338.19 1.094.271 2.203.414 3.304.065.443.193.992.677 1.15 1.258.35 2.648-.091 3.877.186.569 1.244.679 2.681 1.187 3.962.252.479.833.599 1.328.598-.57-1.325-.988-2.714-1.18-4.146-.11-.575-.182-1.354-.835-1.566-.98-.288-2.014-.128-3.016-.095-.04-.309-.078-.616-.116-.925 1.115-.014 2.23.014 3.346-.016-.632-1.305-2.316-.736-3.457-.795-.118-.796-.191-1.601-.322-2.395-.106-.682-1.027-1.028-1.566-.598zm-3.456 7.383c-.051 2.367 2.53 4.266 4.779 3.573 1.909-.47 3.21-2.57 2.702-4.487l-.958-.003c.419 1.331-.251 2.87-1.54 3.421-1.502.779-3.535-.153-3.936-1.793-.433-1.443.468-3.074 1.91-3.498l-.116-.931c-1.628.452-2.911 1.99-2.839 3.718z"/><path fill="#fff" d="M11.531 4.902c1.399-.58 2.201 1.759.773 2.179-1.397.574-2.195-1.759-.772-2.179zM10.618 7.664c.539-.43 1.46-.083 1.566.598.13.795.204 1.599.322 2.396 1.141.059 2.824-.51 3.457.795-1.115.03-2.231.002-3.347.016l.116.925c1.002-.032 2.037-.193 3.016.095.653.212.726.991.835 1.566.193 1.432.611 2.821 1.181 4.146-.495.002-1.076-.119-1.328-.598-.508-1.279-.618-2.717-1.187-3.961-1.23-.277-2.619.164-3.877-.186-.485-.157-.612-.706-.677-1.15-.143-1.101-.224-2.209-.414-3.304-.082-.459-.094-1.043.338-1.338z"/><path fill="#fff" d="M7.162 15.047c-.072-1.728 1.211-3.265 2.839-3.718.04.31.078.621.116.931-1.442.424-2.343 2.055-1.909 3.498.401 1.639 2.434 2.572 3.936 1.793 1.29-.551 1.961-2.09 1.54-3.422l.958.003c.508 1.918-.792 4.018-2.702 4.487-2.249.693-4.83-1.206-4.779-3.573z"/></svg>`,
 };
@@ -1376,6 +1424,7 @@ async function initPoiLayer() {
 
   // Pre-filter: only keep POIs with ≥1 relevant infraction within 50m
   const filtered = filterPoiByRelevantInfractions(poiData, 50);
+  _filteredPoiData = filtered;
   console.log(`[POIs] ${poiData.features.length} total → ${filtered.features.length} with relevant infractions within 50m`);
 
   map.addSource('pois', { type: 'geojson', data: filtered });
@@ -1763,6 +1812,13 @@ function applyAllFilters() {
     renderRankings();
   }
   if (streetClusters !== null) renderStreetRankings();
+
+  // Re-filter POI source for the current time window
+  if (map.getSource('pois') && _filteredPoiData) {
+    const periodFiltered = filterPoiByRelevantInfractions(_filteredPoiData, 50);
+    map.getSource('pois').setData(periodFiltered);
+    renderPoiRankings();
+  }
 
   // If the street detail panel is open, re-render it with the new period
   if (document.getElementById('street-panel').classList.contains('open')) {
@@ -2698,6 +2754,52 @@ function initStreetRankings() {
 
 function toggleStreets() {
   document.getElementById('streets-panel').classList.toggle('collapsed');
+}
+
+// ── Sensitive locations panel ─────────────────────────────────────────────
+let _filteredPoiData = null; // POIs after relevance filter, stored for ranking
+
+function togglePoiPanel() {
+  document.getElementById('poi-panel').classList.toggle('collapsed');
+}
+
+function renderPoiRankings() {
+  if (!_filteredPoiData) return;
+  const typeFilter = document.getElementById('poi-type-filter').value;
+  const listEl     = document.getElementById('poi-rankings-list');
+
+  let rows = _filteredPoiData.features
+    .filter(f => typeFilter === 'all' || f.properties.poi_type === typeFilter)
+    .map(f => ({
+      name:  f.properties.name,
+      type:  f.properties.poi_type,
+      count: f.properties.relevant_count || 0,
+      coords: f.geometry.coordinates,
+    }))
+    .filter(r => r.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 30);
+
+  const maxCount = rows.length ? rows[0].count : 1;
+
+  listEl.innerHTML = rows.map((r, i) => {
+    const barPct = Math.round(100 * r.count / maxCount);
+    return `
+      <div class="poi-rank-row" onclick="flyToPoiRank(${r.coords[1]}, ${r.coords[0]})">
+        <div class="poi-rank-num">${i + 1}</div>
+        <div class="poi-rank-wrap">
+          <div class="poi-rank-name" title="${r.name}">${r.name}</div>
+          <div class="poi-rank-meta">
+            <div class="poi-rank-bar-bg"><div class="poi-rank-bar" style="width:${barPct}%"></div></div>
+            <div class="poi-rank-val">${r.count}</div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function flyToPoiRank(lat, lon) {
+  map.flyTo({ center: [lon, lat], zoom: 17, duration: 800 });
 }
 
 function renderStreetRankings() {
