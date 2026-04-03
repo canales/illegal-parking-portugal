@@ -184,7 +184,16 @@ def get_network(clat: float, clon: float, refresh: bool) -> Optional[gpd.GeoData
         print(f"    Overpass fetch (attempt {attempt}/{MAX_RETRIES})...", end=' ', flush=True)
         _arm_timeout(FETCH_TIMEOUT_SECS)
         try:
-            G     = ox.graph_from_bbox(bbox=ox_bbox, network_type='drive', simplify=True)
+            # Use a custom filter instead of network_type='drive' to include
+            # pedestrian zones, living streets and service roads where illegal
+            # parking is common but cars cannot legally drive through.
+            # Excludes pure footways, steps and paths to avoid noise.
+            custom_filter = (
+                '["highway"]["area"!~"yes"]'
+                '["highway"!~"footway|path|steps|corridor|elevator|escalator|construction"]'
+                '["access"!~"private|no"]'
+            )
+            G     = ox.graph_from_bbox(bbox=ox_bbox, custom_filter=custom_filter, simplify=True)
             edges = ox.graph_to_gdfs(G, nodes=False)
 
             # Deduplicate bidirectional edges.
