@@ -1425,6 +1425,7 @@ async function initPoiLayer() {
   // Pre-filter: only keep POIs with ≥1 relevant infraction within 50m
   const filtered = filterPoiByRelevantInfractions(poiData, 50);
   _filteredPoiData = filtered;
+  _currentPoiData  = filtered; // initially same as all-time filter
   console.log(`[POIs] ${poiData.features.length} total → ${filtered.features.length} with relevant infractions within 50m`);
 
   map.addSource('pois', { type: 'geojson', data: filtered });
@@ -1818,6 +1819,7 @@ function applyAllFilters() {
   // Re-filter POI source for the current time window
   if (map.getSource('pois') && _filteredPoiData) {
     const periodFiltered = filterPoiByRelevantInfractions(_filteredPoiData, 50, filtered);
+    _currentPoiData = periodFiltered;
     map.getSource('pois').setData(periodFiltered);
     renderPoiRankings();
   }
@@ -2759,23 +2761,25 @@ function toggleStreets() {
 }
 
 // ── Sensitive locations panel ─────────────────────────────────────────────
-let _filteredPoiData = null; // POIs after relevance filter, stored for ranking
+let _filteredPoiData = null; // POIs after all-time relevance filter
+let _currentPoiData  = null; // POIs filtered for current time window (used by rankings)
 
 function togglePoiPanel() {
   document.getElementById('poi-panel').classList.toggle('collapsed');
 }
 
 function renderPoiRankings() {
-  if (!_filteredPoiData) return;
+  const source = _currentPoiData || _filteredPoiData;
+  if (!source) return;
   const typeFilter = document.getElementById('poi-type-filter').value;
   const listEl     = document.getElementById('poi-rankings-list');
 
-  let rows = _filteredPoiData.features
+  let rows = source.features
     .filter(f => typeFilter === 'all' || f.properties.poi_type === typeFilter)
     .map(f => ({
-      name:  f.properties.name,
-      type:  f.properties.poi_type,
-      count: f.properties.relevant_count || 0,
+      name:   f.properties.name,
+      type:   f.properties.poi_type,
+      count:  f.properties.relevant_count || 0,
       coords: f.geometry.coordinates,
     }))
     .filter(r => r.count > 0)
