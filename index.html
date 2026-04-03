@@ -1578,12 +1578,14 @@ function buildInfractionIndex(features) {
 
 // Return only POIs that have ≥1 relevant infraction within radiusM metres.
 // Uses a spatial index for performance (~100ms for 3800 POIs × 16000 infractions).
-function filterPoiByRelevantInfractions(poi, radiusM) {
+// `infractions` defaults to all-time data on initial load, but should be
+// getFilteredFeatures() when called from applyAllFilters for timeline filtering.
+function filterPoiByRelevantInfractions(poi, radiusM, infractions = null) {
   if (!allData) return poi;
-  const allFeatures = allData.features;
-  const CELL        = 0.01;
-  const margin      = Math.ceil((radiusM / 111000) / CELL) + 1;
-  const idx         = buildInfractionIndex(allFeatures);
+  const features = infractions || allData.features;
+  const CELL     = 0.01;
+  const margin   = Math.ceil((radiusM / 111000) / CELL) + 1;
+  const idx      = buildInfractionIndex(features);
 
   const kept = [];
 
@@ -1815,7 +1817,7 @@ function applyAllFilters() {
 
   // Re-filter POI source for the current time window
   if (map.getSource('pois') && _filteredPoiData) {
-    const periodFiltered = filterPoiByRelevantInfractions(_filteredPoiData, 50);
+    const periodFiltered = filterPoiByRelevantInfractions(_filteredPoiData, 50, filtered);
     map.getSource('pois').setData(periodFiltered);
     renderPoiRankings();
   }
