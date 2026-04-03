@@ -56,10 +56,9 @@ PT_SOUTH, PT_WEST, PT_NORTH, PT_EAST = 36.9, -9.5, 42.2, -6.2
 
 # POI type definitions
 POI_TYPES = {
-    'school':       {'label_en': 'School',       'label_pt': 'Escola',            'color': '#4363D8'},
-    'hospital':     {'label_en': 'Hospital',     'label_pt': 'Hospital',           'color': '#E6194B'},
-    'kindergarten': {'label_en': 'Kindergarten', 'label_pt': 'Jardim de infância', 'color': '#F58231'},
-    'care_home':    {'label_en': 'Care home',    'label_pt': 'Lar / residência',   'color': '#3CB44B'},
+    'kindergarten': {'label_en': 'Schools & Kindergartens', 'label_pt': 'Escolas e jardins de infância', 'color': '#F58231'},
+    'hospital':     {'label_en': 'Hospital',    'label_pt': 'Hospital',          'color': '#E6194B'},
+    'care_home':    {'label_en': 'Care home',   'label_pt': 'Lar / residência',  'color': '#3CB44B'},
 }
 
 
@@ -147,7 +146,7 @@ def classify_element(el: dict) -> Optional[str]:
     tags    = el.get('tags', {})
     amenity = tags.get('amenity', '')
     sf      = tags.get('social_facility', '')
-    if amenity == 'school':       return 'school'
+    if amenity == 'school':       return 'kindergarten'  # merged with kindergarten
     if amenity == 'hospital':     return 'hospital'
     if amenity == 'kindergarten': return 'kindergarten'
     if amenity == 'social_facility' and sf in ('nursing_home', 'assisted_living'):
