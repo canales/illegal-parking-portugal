@@ -1802,24 +1802,16 @@ function applyAllFilters() {
   const filtered = getFilteredFeatures();
   const fc = { type: 'FeatureCollection', features: filtered };
 
-  // ── Fast path — runs immediately on every slider tick ──────────────────
   if (map.getSource('points'))  map.getSource('points').setData(fc);
   if (map.getSource('hexbins')) map.getSource('hexbins').setData(computeHexbins(filtered));
-  updateStats(filtered.length);
-  updateFilterCounts(filtered);
 
-  // ── Slow path — debounced 150ms so heavy ops don't run on every tick ───
-  clearTimeout(_applyDebounce);
-  _applyDebounce = setTimeout(() => applyAllFiltersHeavy(filtered), 150);
-}
-
-function applyAllFiltersHeavy(filtered) {
-  // Streets rebuild
   if (map.getSource('streets') && streetData) {
     map.getSource('streets').setData(buildFilteredStreetsData());
   }
 
-  setTimeout(updateViewportStats, 50);
+  updateFilterCounts(filtered);
+  setTimeout(updateViewportStats, 100);
+  updateStats(filtered.length);
 
   if (muniStats !== null) {
     muniStats = buildMunicipalityStats(filtered);
@@ -1827,7 +1819,7 @@ function applyAllFiltersHeavy(filtered) {
   }
   if (streetClusters !== null) renderStreetRankings();
 
-  // POI filter — use cached spatial index if filtered set hasn't changed
+  // Re-filter POI source for the current time window
   if (map.getSource('pois') && _filteredPoiData) {
     const fingerprint = `${startMonthIdx}-${endMonthIdx}-${currentType}`;
     if (fingerprint !== _lastFilteredIds) {
