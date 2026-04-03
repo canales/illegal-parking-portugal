@@ -1041,6 +1041,10 @@ let currentType   = 'all';
 let _activeCluster = null;   // last cluster opened in the detail panel
 let _activeBbox    = null;   // bbox of last opened cluster
 let _activeSegProp = null;   // properties of last map-clicked segment
+
+let _applyDebounce  = null;  // debounce timer for heavy applyAllFilters operations
+let _poiIndexCache  = null;  // cached spatial index for POI filtering { key, index }
+let _lastFilteredIds = null; // fingerprint of last filtered set to detect changes
 let typeList      = [];
 let months        = [];       // sorted array of 'YYYY-MM' strings
 let startMonthIdx = 0;        // left handle
@@ -1798,30 +1802,43 @@ function applyAllFilters() {
   const filtered = getFilteredFeatures();
   const fc = { type: 'FeatureCollection', features: filtered };
 
+  // ── Fast path — runs immediately on every slider tick ──────────────────
   if (map.getSource('points'))  map.getSource('points').setData(fc);
   if (map.getSource('hexbins')) map.getSource('hexbins').setData(computeHexbins(filtered));
+  updateStats(filtered.length);
+  updateFilterCounts(filtered);
 
-  // Rebuild streets source with period-filtered counts so colors reflect
-  // the selected time window, not all-time totals
+  // ── Slow path — debounced 150ms so heavy ops don't run on every tick ───
+  clearTimeout(_applyDebounce);
+  _applyDebounce = setTimeout(() => applyAllFiltersHeavy(filtered), 150);
+}
+
+function applyAllFiltersHeavy(filtered) {
+  // Streets rebuild
   if (map.getSource('streets') && streetData) {
-    map.getSource('streets').setData(buildFilteredStreetsData());
+    requestAnimationFrame(() => {
+      map.getSource('streets').setData(buildFilteredStreetsData());
+    });
   }
 
-  updateFilterCounts(filtered);
-  setTimeout(updateViewportStats, 100);
-  updateStats(filtered.length);
+  setTimeout(updateViewportStats, 50);
+
   if (muniStats !== null) {
     muniStats = buildMunicipalityStats(filtered);
     renderRankings();
   }
   if (streetClusters !== null) renderStreetRankings();
 
-  // Re-filter POI source for the current time window
+  // POI filter — use cached spatial index if filtered set hasn't changed
   if (map.getSource('pois') && _filteredPoiData) {
-    const periodFiltered = filterPoiByRelevantInfractions(_filteredPoiData, 50, filtered);
-    _currentPoiData = periodFiltered;
-    map.getSource('pois').setData(periodFiltered);
-    renderPoiRankings();
+    const fingerprint = `${startMonthIdx}-${endMonthIdx}-${currentType}`;
+    if (fingerprint !== _lastFilteredIds) {
+      _lastFilteredIds = fingerprint;
+      const periodFiltered = filterPoiByRelevantInfractions(_filteredPoiData, 50, filtered);
+      _currentPoiData = periodFiltered;
+      map.getSource('pois').setData(periodFiltered);
+      renderPoiRankings();
+    }
   }
 
   // If the street detail panel is open, re-render it with the new period
