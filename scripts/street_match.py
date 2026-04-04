@@ -193,7 +193,7 @@ def get_network(clat: float, clon: float, refresh: bool) -> Optional[gpd.GeoData
                 '["highway"!~"footway|path|steps|corridor|elevator|escalator|construction"]'
                 '["access"!~"private|no"]'
             )
-            G     = ox.graph_from_bbox(bbox=ox_bbox, custom_filter=custom_filter, simplify=True)
+            G     = ox.graph_from_bbox(bbox=ox_bbox, custom_filter=custom_filter, simplify=True, retain_all=True)
             edges = ox.graph_to_gdfs(G, nodes=False)
 
             # Deduplicate bidirectional edges.
