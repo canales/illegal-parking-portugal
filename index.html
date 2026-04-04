@@ -1322,7 +1322,7 @@ function initStreetLayers() {
     paint: {
       'line-color': ['step', ['get', 'count'], '#FFC300', 5, '#FF5733', 20, '#C70039', 50, '#900C3F', 100, '#5A1846'],
       'line-width': ['interpolate', ['linear'], ['get', 'count'], 1, 1.5, 10, 3, 50, 5, 200, 9],
-      'line-opacity': 0.9
+      'line-opacity': ['case', ['>', ['get', 'count'], 0], 0.9, 0]
     }
   });
   // Ranked streets — dark forest green (#408A71)
@@ -1332,7 +1332,7 @@ function initStreetLayers() {
     paint: {
       'line-color': '#408A71',
       'line-width': ['interpolate', ['linear'], ['get', 'count'], 1, 3, 10, 5, 50, 7, 200, 11],
-      'line-opacity': 1
+      'line-opacity': ['case', ['>', ['get', 'count'], 0], 1, 0]
     },
     filter: ['in', 'street_name', '']
   });
@@ -1847,6 +1847,9 @@ function applyAllFilters() {
 
 // Rebuild streetData with period-filtered counts from monthly_breakdown.
 // This ensures the streets-line color scale reflects the selected time window.
+// IMPORTANT: we must NOT filter out features — generateId:true assigns IDs by
+// array position, so removing features shifts all subsequent IDs and breaks the
+// streets-ranked highlight filter. Zero-count streets are hidden via opacity.
 function buildFilteredStreetsData() {
   const start = months[startMonthIdx];
   const end   = months[endMonthIdx];
@@ -1855,13 +1858,13 @@ function buildFilteredStreetsData() {
     type: 'FeatureCollection',
     features: streetData.features
       .map(f => {
-        if (full) return f; // no-op for full period — use original counts
+        if (full) return f;
         const mb = (() => { try { return JSON.parse(f.properties.monthly_breakdown || '{}'); } catch(_) { return {}; } })();
         const periodCount = Object.entries(mb).reduce((s, [ym, n]) =>
           (ym >= start && ym <= end ? s + n : s), 0);
         return { ...f, id: f.id, properties: { ...f.properties, count: periodCount } };
       })
-      .filter(f => f.properties.count > 0) // hide streets with no reports in selected period
+    // No .filter() here — removing features breaks generateId sequential IDs
   };
 }
 
