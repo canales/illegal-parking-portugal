@@ -65,9 +65,9 @@ PT_LON_MIN, PT_LON_MAX = -32.0, -6.0
 
 # ── Snap config ────────────────────────────────────────────────────────────
 SNAP_THRESHOLD_M   = 100   # increased from 50m — wider avenues and GPS drift require more tolerance
-FETCH_TIMEOUT_SECS = 120   # increased from 60 — broader custom_filter returns more data
-DELAY_BETWEEN_SECS = 15    # polite pause between requests
-MAX_RETRIES        = 2     # one retry is enough; 3 retries × 60s = 3min wasted per cell
+FETCH_TIMEOUT_SECS = 90    # per-cell timeout — fail fast so more cells complete overall
+DELAY_BETWEEN_SECS = 5     # reduced from 15s — saves ~50min per full run
+MAX_RETRIES        = 1     # fail fast and skip; cached cells fill gaps on next run
 
 # ── osmnx 2.x settings ────────────────────────────────────────────────────
 ox.settings.log_console       = False

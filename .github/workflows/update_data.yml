@@ -53,14 +53,6 @@ jobs:
 
       - name: Run street matching (grid, with cache)
         run: python scripts/street_match.py
-        
-      - name: Upload Belém cell cache for debugging
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: belem-cell-cache
-          path: data/osm_cache/cell_38.6_-9.3.gpkg
-          retention-days: 3
 
       # SAVE — always save caches after the run, even if steps failed
       - name: Save OSM cache
