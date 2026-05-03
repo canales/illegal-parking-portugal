@@ -81,7 +81,14 @@ def record_to_feature(rec: dict) -> Optional[dict]:
     lon = loc.get('longitude')
     if lat is None or lon is None:
         return None
-    if not (-9.6 <= lon <= -6.1 and 36.8 <= lat <= 42.2):
+    # Validate coordinates cover all Portuguese territory including islands:
+    # Mainland: ~36.8–42.2°N, ~-9.6–-6.1°W
+    # Madeira:  ~32.6–33.1°N, ~-17.3–-16.3°W
+    # Azores:   ~36.9–39.7°N, ~-31.3–-25.0°W
+    mainland = (-9.6 <= lon <= -6.1 and 36.8 <= lat <= 42.2)
+    madeira  = (-17.4 <= lon <= -16.2 and 32.5 <= lat <= 33.2)
+    azores   = (-31.4 <= lon <= -24.9 and 36.8 <= lat <= 39.8)
+    if not (mainland or madeira or azores):
         return None
 
     occurred_at = rec.get('occurredAt') or rec.get('createdAt')
