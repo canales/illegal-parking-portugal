@@ -3087,16 +3087,15 @@ function openPanelFromCluster(cl, bbox) {
   document.getElementById('panel-total').innerHTML         = T[lang].panel_total(displayCount);
   document.getElementById('panel-meta').textContent        = formatPeriodLabel();
 
-  // Source breakdown when both toggles are on
+  // Source breakdown when both toggles are on — always show on any street with data
   let sourceNote = '';
   if (showDenuncia && showImbecis && imbecisStreetData) {
-    const imbecisCount = getImbecisCountForStreet(cl.name);
-    if (imbecisCount > 0) {
-      sourceNote = `<div style="font-size:0.68rem;color:#888;margin-top:4px">
-        <span style="color:#4a9eff">Denúncia: ${displayCount - imbecisCount}</span>
-        · <span style="color:#F58231">Imbecis: ${imbecisCount}</span>
-      </div>`;
-    }
+    const imbecisCount  = getImbecisCountForStreet(cl.name);
+    const denuciaCount  = displayCount - imbecisCount;
+    sourceNote = `<div style="font-size:0.68rem;color:#888;margin-top:4px">
+      <span style="color:#4a9eff">Denúncia: ${Math.max(0, denuciaCount)}</span>
+      · <span style="color:#aaa">Imbecis: ${imbecisCount}</span>
+    </div>`;
   }
   const sourceEl = document.getElementById('panel-source-note');
   if (sourceEl) sourceEl.innerHTML = sourceNote;
