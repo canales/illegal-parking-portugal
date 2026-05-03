@@ -1536,8 +1536,11 @@ async function initPoiLayer() {
     }
   });
 
-  map.setLayoutProperty('pois-circle', 'visibility', 'none');
-  map.setLayoutProperty('pois-labels', 'visibility', 'none');
+  // Restore visibility state — initAllLayers may be called on toggle/style change
+  // while POIs are already visible, so preserve the current state
+  const vis = poiVisible ? 'visible' : 'none';
+  map.setLayoutProperty('pois-circle', 'visibility', vis);
+  map.setLayoutProperty('pois-labels', 'visibility', vis);
 
   // Click → popup with per-type breakdown
   map.on('click', 'pois-circle', e => {
@@ -1713,7 +1716,9 @@ function filterPoiByRelevantInfractions(poi, radiusM, infractions = null) {
         const cell = idx.get(key);
         if (!cell) continue;
         for (const inf of cell) {
-          if (!relevant.includes(inf.properties.infraction_type)) continue;
+          // Imbecis reports have no specific type — treat as relevant for all POI types
+          const infType = inf.properties.infraction_type;
+          if (infType !== 'imbecis' && !relevant.includes(infType)) continue;
           const [iLon, iLat] = inf.geometry.coordinates;
           if (haversineMetres(lat, lon, iLat, iLon) <= radiusM) count++;
         }
@@ -3242,10 +3247,11 @@ function updateViewportStats() {
     lat >= bounds.getSouth() && lat <= bounds.getNorth() &&
     lon >= bounds.getWest()  && lon <= bounds.getEast();
 
-  // Streets view — filter streetData by bounds, merge type_breakdowns
-  if (currentView === 'streets' && streetData) {
+  // Streets view — filter active street data by bounds, merge type_breakdowns
+  if (currentView === 'streets' && (streetData || imbecisStreetData)) {
+    const activeStreets = getActiveStreetData();
     const merged = {};
-    streetData.features.forEach(f => {
+    activeStreets.features.forEach(f => {
       // Use centroid of first coordinate of the line as the location check
       const coords = f.geometry.coordinates;
       const mid = coords[Math.floor(coords.length / 2)];
