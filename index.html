@@ -533,6 +533,11 @@
     <span data-i18n="filter_label">Infraction type:</span>
     <select id="filter-type"><option value="all" data-i18n="filter_all">All</option></select>
   </label>
+  <label id="source-wrap">
+    <span data-i18n="source_label_ctrl">Source:</span>
+    <button id="btn-denuncia" class="toggle-btn source-btn active" onclick="toggleSource('denuncia')" title="Denúncia Estacionamento">Denúncia</button>
+    <button id="btn-imbecis"  class="toggle-btn source-btn active" onclick="toggleSource('imbecis')"  title="Imbecis">Imbecis</button>
+  </label>
   <label>
     <span data-i18n="style_label">Basemap:</span>
     <select id="style-select" onchange="setMapStyle(this.value)">
@@ -561,10 +566,6 @@
   </label>
   <label id="poi-wrap">
     <button id="btn-pois" class="toggle-btn" onclick="togglePois(); if(poiVisible) document.getElementById('poi-panel').classList.remove('collapsed');" data-i18n="poi_toggle">Sensitive locations</button>
-  </label>
-  <label id="source-wrap">
-    <button id="btn-denuncia" class="toggle-btn source-btn active" onclick="toggleSource('denuncia')" title="Denúncia Estacionamento">Denúncia</button>
-    <button id="btn-imbecis"  class="toggle-btn source-btn active" onclick="toggleSource('imbecis')"  title="Imbecis" style="border-color:#F58231;color:#F58231">Imbecis</button>
   </label>
 </div>
 
@@ -737,6 +738,7 @@ const T = {
     stat_new:        n => `+${n} reports`,
     survey_btn:      'Take the Lisbon City Hall Survey →',
     filter_label:    'Infraction type:',
+    source_label_ctrl: 'Source:',
     filter_all:      'All',
     view_label:      'View:',
     view_heat:       'Heatmap',
@@ -800,6 +802,7 @@ const T = {
     stat_new:        n => `+${n} denúncias`,
     survey_btn:      'Responder ao Inquérito da CML →',
     filter_label:    'Tipo de infração:',
+    source_label_ctrl: 'Fonte:',
     filter_all:      'Todos',
     view_label:      'Vista:',
     view_heat:       'Mapa de calor',
@@ -1240,7 +1243,7 @@ async function initAllLayers() {
   });
 
   if (allData)    { initPointsLayers(); initHexLayer(); }
-  if (streetData) { initStreetLayers(); }
+  if (streetData || imbecisStreetData) { initStreetLayers(); }
   if (poiData)    { await initPoiLayer(); renderPoiRankings(); }
   initMunioBoundaryLayer();
   applyAllFilters();
@@ -1371,7 +1374,7 @@ function initHexLayer() {
 }
 
 function initStreetLayers() {
-  map.addSource('streets', { type: 'geojson', data: streetData, generateId: true });
+  map.addSource('streets', { type: 'geojson', data: getActiveStreetData(), generateId: true });
   map.addLayer({
     id: 'streets-line', type: 'line', source: 'streets',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
@@ -1629,6 +1632,7 @@ function toggleSource(source) {
   populateFilters();
   initTimeline();
   initAllLayers();
+  initStreetRankings();
   updateStats();
 }
 
@@ -1943,13 +1947,23 @@ function applyAllFilters() {
 // IMPORTANT: we must NOT filter out features — generateId:true assigns IDs by
 // array position, so removing features shifts all subsequent IDs and breaks the
 // streets-ranked highlight filter. Zero-count streets are hidden via opacity.
+// Returns the active street GeoJSON based on source toggles.
+// When both on: merge Denuncia + Imbecis features.
+// generateId:true assigns IDs by position, so we must never filter features out.
+function getActiveStreetData() {
+  const denFeats = showDenuncia && streetData    ? streetData.features    : [];
+  const imFeats  = showImbecis  && imbecisStreetData ? imbecisStreetData.features : [];
+  return { type: 'FeatureCollection', features: [...denFeats, ...imFeats] };
+}
+
 function buildFilteredStreetsData() {
   const start = months[startMonthIdx];
   const end   = months[endMonthIdx];
   const full  = isFullPeriod();
+  const active = getActiveStreetData();
   return {
     type: 'FeatureCollection',
-    features: streetData.features
+    features: active.features
       .map(f => {
         if (full) return f;
         const mb = (() => { try { return JSON.parse(f.properties.monthly_breakdown || '{}'); } catch(_) { return {}; } })();
@@ -2829,11 +2843,17 @@ function countInPeriod(monthlyBreakdownJson) {
 }
 
 function initStreetRankings() {
-  if (!streetData) return;
+  const active = getActiveStreetData();
+  if (!active.features.length) return;
 
-  // Build segment objects from streetData features
-  // Skip unnamed streets (name is null/empty) — they can't meaningfully rank
-  const segments = streetData.features
+  // Reset dropdowns before repopulating
+  const muniSel = document.getElementById('streets-muni-filter');
+  const typeSel = document.getElementById('streets-type-filter');
+  muniSel.innerHTML = '<option value="" data-i18n="filter_all">All Portugal</option>';
+  typeSel.innerHTML = '<option value="all" data-i18n="filter_all">All</option>';
+
+  // Build segment objects from active street features
+  const segments = active.features
     .map((f, originalIdx) => ({ f, originalIdx }))
     .filter(({ f }) => f.properties.street_name && f.properties.municipio)
     .map(({ f, originalIdx }) => ({
@@ -2851,22 +2871,22 @@ function initStreetRankings() {
 
   // Populate municipality dropdown — sorted alphabetically
   streetMuniList = [...new Set(streetClusters.map(c => c.municipio))].sort();
-  const sel = document.getElementById('streets-muni-filter');
   streetMuniList.forEach(muni => {
     const opt = document.createElement('option');
     opt.value = muni;
     opt.textContent = muni;
-    sel.appendChild(opt);
+    muniSel.appendChild(opt);
   });
 
-  // Populate infraction type filter — same order as main dropdown
-  const typeSel = document.getElementById('streets-type-filter');
+  // Populate infraction type filter
   typeList.forEach(type => {
     const opt = document.createElement('option');
     opt.value = type;
     opt.textContent = lbl(type);
     typeSel.appendChild(opt);
   });
+
+  renderStreetRankings();
 }
 
 function toggleStreets() {
