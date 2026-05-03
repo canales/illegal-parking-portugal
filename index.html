@@ -1614,7 +1614,6 @@ function getImbecisCountForStreet(streetName) {
   let count = 0;
   for (const feat of imbecisStreetData.features) {
     if (feat.properties.street_name !== streetName) continue;
-    // Use monthly_breakdown for period filtering if available
     const mb = (() => { try { return JSON.parse(feat.properties.monthly_breakdown || '{}'); } catch(_) { return {}; } })();
     if (Object.keys(mb).length) {
       count += Object.entries(mb).reduce((s, [ym, n]) =>
@@ -3090,10 +3089,10 @@ function openPanelFromCluster(cl, bbox) {
   // Source breakdown when both toggles are on — always show on any street with data
   let sourceNote = '';
   if (showDenuncia && showImbecis && imbecisStreetData) {
-    const imbecisCount  = getImbecisCountForStreet(cl.name);
-    const denuciaCount  = displayCount - imbecisCount;
+    const imbecisCount = getImbecisCountForStreet(cl.name);
+    const denuciaCount = Math.max(0, displayCount - imbecisCount);
     sourceNote = `<div style="font-size:0.68rem;color:#888;margin-top:4px">
-      <span style="color:#4a9eff">Denúncia: ${Math.max(0, denuciaCount)}</span>
+      <span style="color:#4a9eff">Denúncia: ${denuciaCount}</span>
       · <span style="color:#aaa">Imbecis: ${imbecisCount}</span>
     </div>`;
   }
