@@ -1947,6 +1947,17 @@ function applyAllFilters() {
       const displayCount = periodCount > 0 ? periodCount : _activeSegProp.count;
       document.getElementById('panel-total').innerHTML  = T[lang].panel_total(displayCount);
       document.getElementById('panel-meta').textContent = formatPeriodLabel();
+      const sourceEl = document.getElementById('panel-source-note');
+      if (sourceEl && showDenuncia && showImbecis && imbecisStreetData && _activeSegProp.street_name) {
+        const imbecisCount = getImbecisCountForStreet(_activeSegProp.street_name);
+        const denuciaCount = Math.max(0, displayCount - imbecisCount);
+        sourceEl.innerHTML = `<div style="font-size:0.68rem;color:#888;margin-top:4px">
+          <span style="color:#4a9eff">Denúncia: ${denuciaCount}</span>
+          · <span style="color:#aaa">Imbecis: ${imbecisCount}</span>
+        </div>`;
+      } else if (sourceEl) {
+        sourceEl.innerHTML = '';
+      }
       updateBreakdownLabel();
     }
   }
@@ -3338,6 +3349,21 @@ map.on('click', 'streets-line', e => {
   document.getElementById('panel-street-name').textContent = p.street_name || t('panel_unnamed');
   document.getElementById('panel-total').innerHTML         = T[lang].panel_total(displayCount);
   document.getElementById('panel-meta').textContent        = formatPeriodLabel();
+
+  // Source breakdown when both toggles are on
+  const sourceEl = document.getElementById('panel-source-note');
+  if (sourceEl) {
+    if (showDenuncia && showImbecis && imbecisStreetData && p.street_name) {
+      const imbecisCount = getImbecisCountForStreet(p.street_name);
+      const denuciaCount = Math.max(0, displayCount - imbecisCount);
+      sourceEl.innerHTML = `<div style="font-size:0.68rem;color:#888;margin-top:4px">
+        <span style="color:#4a9eff">Denúncia: ${denuciaCount}</span>
+        · <span style="color:#aaa">Imbecis: ${imbecisCount}</span>
+      </div>`;
+    } else {
+      sourceEl.innerHTML = '';
+    }
+  }
 
   document.getElementById('breakdown-chart').innerHTML = sorted.map(([type, count]) => `
     <div class="breakdown-row">
