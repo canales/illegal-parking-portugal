@@ -587,6 +587,12 @@
     <div class="pp-type" id="pp-type"></div>
     <div class="pp-row"  id="pp-date"></div>
     <div class="pp-row"  id="pp-auth"></div>
+    <div id="pp-picture-wrap" style="display:none;margin:8px 0">
+      <a id="pp-picture-link" href="#" target="_blank">
+        <img id="pp-picture" src="" alt="report photo"
+          style="width:100%;max-height:140px;object-fit:cover;border-radius:5px;display:block;cursor:pointer" />
+      </a>
+    </div>
     <div class="pp-links">
       <a class="pp-link gsv"       id="pp-gsv"       href="#" target="_blank">🗺 Street View</a>
       <a class="pp-link mapillary" id="pp-mapillary" href="#" target="_blank">📷 Mapillary</a>
@@ -2161,7 +2167,20 @@ map.on('click', 'points-circle', e => {
   document.getElementById('pp-type').textContent = lbl(p.infraction_type);
   document.getElementById('pp-date').textContent =
     `📅 ${(p.occurredAt||p.data_data||'').substring(0,10)} ${t('tip_at')} ${(p.occurredAt||'').substring(11,16)||p.data_hora||'—'}`;
-  document.getElementById('pp-auth').textContent = `🚔 ${p.autoridade||'—'}`;
+  document.getElementById('pp-auth').textContent = p.autoridade ? `🚔 ${p.autoridade}` : '';
+
+  // Show photo if available (Imbecis reports)
+  const picWrap = document.getElementById('pp-picture-wrap');
+  const picImg  = document.getElementById('pp-picture');
+  const picLink = document.getElementById('pp-picture-link');
+  if (p.picture) {
+    picImg.src       = p.picture;
+    picLink.href     = p.picture;
+    picWrap.style.display = '';
+  } else {
+    picWrap.style.display = 'none';
+    picImg.src = '';
+  }
 
   document.getElementById('pp-gsv').href =
     `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lngLat.lat},${lngLat.lng}`;
@@ -2170,12 +2189,13 @@ map.on('click', 'points-circle', e => {
 
   const popup = document.getElementById('point-popup');
   popup.style.display = 'block';
-  const rect   = document.getElementById('map').getBoundingClientRect();
-  const margin = 16;
+  const rect      = document.getElementById('map').getBoundingClientRect();
+  const margin    = 16;
+  const popupH    = p.picture ? 320 : 170;  // taller when photo shown
   let x = e.point.x + 14;
   let y = e.point.y - 10;
   if (x + 260 > rect.width)  x = e.point.x - 270;
-  if (y + 160 > rect.height) y = e.point.y - 170;
+  if (y + popupH > rect.height) y = e.point.y - popupH - 10;
   popup.style.left = Math.max(margin, x) + 'px';
   popup.style.top  = Math.max(margin, y) + 'px';
   hideTip();
