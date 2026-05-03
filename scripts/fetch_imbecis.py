@@ -119,7 +119,10 @@ def fetch_since(from_time: Optional[str]) -> list:
         print(f"  Fetching page {page}: {url}")
 
         try:
-            req  = urllib.request.Request(url, headers={'Accept': 'application/json'})
+            req  = urllib.request.Request(url, headers={
+            'Accept':     'application/json',
+            'User-Agent': 'illegal-parking-portugal-map/1.0 (https://canales.github.io/illegal-parking-portugal)',
+        })
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
         except Exception as e:
