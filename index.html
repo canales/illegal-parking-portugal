@@ -1070,7 +1070,7 @@ function getFilteredFeatures() {
   const end   = months[endMonthIdx];
   return allData.features.filter(f => {
     const typeOk = currentType === 'all' || f.properties.infraction_type === currentType;
-    const m      = (f.properties.data_data || '').substring(0, 7);
+    const m      = (f.properties.occurredAt || f.properties.data_data || '').substring(0, 7);
     const dateOk = m >= start && m <= end;
     return typeOk && dateOk;
   });
@@ -1176,7 +1176,7 @@ async function initAllLayers() {
   // Defensively remove any leftover sources/layers before adding.
   // After setStyle() MapLibre clears them, but if there's a race condition
   // this prevents "source already exists" errors that silently abort the function.
-  ['heatmap','points-circle','hex-extrusion','streets-line','streets-highlight','pois-circle','pois-labels'].forEach(id => {
+  ['heatmap','points-circle','hex-extrusion','streets-line','streets-ranked','streets-highlight','pois-circle','pois-labels'].forEach(id => {
     if (map.getLayer(id)) map.removeLayer(id);
   });
   ['points','hexbins','streets','pois'].forEach(id => {
@@ -1890,7 +1890,7 @@ function updateStats(count) {
 function initTimeline() {
   const monthSet = new Set();
   allData.features.forEach(f => {
-    const m = (f.properties.data_data || '').substring(0, 7);
+    const m = (f.properties.occurredAt || f.properties.data_data || '').substring(0, 7);
     if (m.length === 7) monthSet.add(m);
   });
   months = [...monthSet].sort();
@@ -2026,7 +2026,7 @@ map.on('mousemove',  'points-circle', e => {
   const p = e.features[0].properties;
   showTip(e.point, `
     <div class="tip-type">${lbl(p.infraction_type)}</div>
-    <div class="tip-row">📅 ${(p.data_data||'').substring(0,10)} ${t('tip_at')} ${p.data_hora||'—'}</div>
+    <div class="tip-row">📅 ${(p.occurredAt||p.data_data||'').substring(0,10)} ${t('tip_at')} ${(p.occurredAt||'').substring(11,16)||p.data_hora||'—'}</div>
     <div class="tip-row">🚔 ${p.autoridade||'—'}</div>
   `);
 });
@@ -2043,7 +2043,7 @@ map.on('click', 'points-circle', e => {
 
   document.getElementById('pp-type').textContent = lbl(p.infraction_type);
   document.getElementById('pp-date').textContent =
-    `📅 ${(p.data_data||'').substring(0,10)} ${t('tip_at')} ${p.data_hora||'—'}`;
+    `📅 ${(p.occurredAt||p.data_data||'').substring(0,10)} ${t('tip_at')} ${(p.occurredAt||'').substring(11,16)||p.data_hora||'—'}`;
   document.getElementById('pp-auth').textContent = `🚔 ${p.autoridade||'—'}`;
 
   document.getElementById('pp-gsv').href =
@@ -2303,7 +2303,7 @@ function computeMuniTrends(typeFilter) {
     const muni = getMuni(f);
     if (!muni) return;
     if (typeFilter !== 'all' && f.properties.infraction_type !== typeFilter) return;
-    const ym = (f.properties.data_data || '').substring(0, 7);
+    const ym = (f.properties.occurredAt || f.properties.data_data || '').substring(0, 7);
     if (!ym || ym.length !== 7) return;
     if (!muniMonthly[muni]) muniMonthly[muni] = {};
     muniMonthly[muni][ym] = (muniMonthly[muni][ym] || 0) + 1;
@@ -2446,7 +2446,7 @@ function exportRankingsCSV() {
     const muni = getMuni(f);
     if (!muni) return;
     if (typeFilter !== 'all' && f.properties.infraction_type !== typeFilter) return;
-    const ym = (f.properties.data_data || '').substring(0, 7);
+    const ym = (f.properties.occurredAt || f.properties.data_data || '').substring(0, 7);
     if (!ym) return;
     if (!monthly[muni]) monthly[muni] = {};
     monthly[muni][ym] = (monthly[muni][ym] || 0) + 1;
