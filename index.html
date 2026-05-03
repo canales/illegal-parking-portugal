@@ -1427,6 +1427,7 @@ const POI_RELEVANT_TYPES = {
 
 function loadPoiIcons() {
   const legendItems = document.getElementById('poi-legend-items');
+  if (legendItems) legendItems.innerHTML = ''; // clear before rebuilding
   const entries = [
     { type: 'kindergarten', labelKey: 'poi_kindergarten' },
     { type: 'hospital',     labelKey: 'poi_hospital' },
