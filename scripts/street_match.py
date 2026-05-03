@@ -50,10 +50,12 @@ import pandas as pd
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 ROOT       = Path(__file__).resolve().parent.parent
-IN_PATH    = ROOT / 'data' / 'infractions.geojson'
-OUT_PATH   = ROOT / 'data' / 'streets_matched.geojson'
-ROAD_LENGTHS_PATH = ROOT / 'data' / 'road_network_lengths.json'
 CACHE_DIR  = ROOT / 'data' / 'osm_cache'
+
+# Paths can be overridden via --input / --output CLI args (see main())
+_DEFAULT_IN   = ROOT / 'data' / 'infractions.geojson'
+_DEFAULT_OUT  = ROOT / 'data' / 'streets_matched.geojson'
+ROAD_LENGTHS_PATH = ROOT / 'data' / 'road_network_lengths.json'
 
 # ── Grid config ────────────────────────────────────────────────────────────
 CELL_SIZE  = 0.1    # degrees — ~10km × 10km at Portugal's latitude
@@ -132,11 +134,13 @@ def load_infractions() -> pd.DataFrame:
         if not (PT_LAT_MIN <= lat <= PT_LAT_MAX and PT_LON_MIN <= lon <= PT_LON_MAX):
             continue
         p = feat['properties']
+        # Both sources now use occurredAt; fall back to data_data for legacy records
+        date_str = p.get('occurredAt') or p.get('data_data', '')
         rows.append({
             'lat': lat, 'lon': lon,
             'infraction_type': p.get('infraction_type', ''),
-            'year':  p.get('data_data', '')[:4],
-            'month': p.get('data_data', '')[:7]   # YYYY-MM for monthly breakdown
+            'year':  date_str[:4],
+            'month': date_str[:7],   # YYYY-MM for monthly breakdown
         })
     df = pd.DataFrame(rows)
     print(f"Loaded {len(df)} infraction points (within Portugal bbox).")
@@ -432,12 +436,21 @@ def build_features(edges_proj: gpd.GeoDataFrame, agg: dict, munis: 'gpd.GeoDataF
 
 # ── Main ───────────────────────────────────────────────────────────────────
 def main():
+    global IN_PATH, OUT_PATH
+
     parser = argparse.ArgumentParser(description='Portugal grid street matching with OSM cache')
     parser.add_argument('--refresh-cache', action='store_true',
                         help='Re-fetch all cells from Overpass, ignoring the cache')
     parser.add_argument('--cell', nargs=2, type=float, metavar=('LAT', 'LON'),
                         help='Process a single cell origin only, e.g. --cell 38.7 -9.1')
+    parser.add_argument('--input',  default=str(_DEFAULT_IN),
+                        help='Input infractions GeoJSON (default: data/infractions.geojson)')
+    parser.add_argument('--output', default=str(_DEFAULT_OUT),
+                        help='Output streets GeoJSON (default: data/streets_matched.geojson)')
     args = parser.parse_args()
+
+    IN_PATH  = Path(args.input)
+    OUT_PATH = Path(args.output)
 
     df_all = load_infractions()
     grid   = build_grid(df_all)
@@ -505,12 +518,12 @@ def main():
     size_kb = OUT_PATH.stat().st_size / 1024
     print(f"✓ Saved → {OUT_PATH} ({size_kb:.0f} KB)")
 
-    # Save road network lengths — {municipio: km} — used by the map for
-    # accurate per-km-road rankings using full OSM network, not just matched streets
-    road_km_rounded = {m: round(km, 3) for m, km in road_km_acc.items()}
-    with open(ROAD_LENGTHS_PATH, 'w', encoding='utf-8') as f:
-        json.dump(road_km_rounded, f, ensure_ascii=False, indent=2)
-    print(f"✓ Saved road lengths → {ROAD_LENGTHS_PATH} ({len(road_km_rounded)} municipalities)")
+    # Save road network lengths only for the main infractions run
+    if IN_PATH == _DEFAULT_IN:
+        road_km_rounded = {m: round(km, 3) for m, km in road_km_acc.items()}
+        with open(ROAD_LENGTHS_PATH, 'w', encoding='utf-8') as f:
+            json.dump(road_km_rounded, f, ensure_ascii=False, indent=2)
+        print(f"✓ Saved road lengths → {ROAD_LENGTHS_PATH} ({len(road_km_rounded)} municipalities)")
 
 
 if __name__ == "__main__":

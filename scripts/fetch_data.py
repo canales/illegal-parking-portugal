@@ -54,14 +54,34 @@ def load_existing():
             features = data.get("features", [])
             seen = set()
             for feat in features:
-                coords = feat["geometry"]["coordinates"]
-                date   = feat["properties"].get("data_data", "")
-                seen.add(f"{coords[0]}_{coords[1]}_{date}")
+                p = feat["properties"]
+                # Prefer id-based dedup; fall back to composite key for old records
+                if p.get("id"):
+                    seen.add(p["id"])
+                else:
+                    coords = feat["geometry"]["coordinates"]
+                    seen.add(f"{coords[0]}_{coords[1]}_{p.get('occurredAt', '')}")
             print(f"Loaded {len(features)} existing records.")
             return features, seen
         except Exception as e:
             print(f"Could not parse existing file ({e}) — starting fresh.")
             return [], set()
+
+
+def build_occurred_at(data_data: str, data_hora: str) -> str:
+    """Combine data_data (date) and data_hora (time) into a single ISO 8601 string.
+
+    data_data is stored as midnight UTC e.g. '2020-06-23T22:00:00.000Z'
+    data_hora is the local time e.g. '19:31:00'
+    We use the date part of data_data and attach data_hora to form a naive
+    local datetime string: '2020-06-23T19:31:00'
+    """
+    if not data_data:
+        return ''
+    date_part = data_data[:10]   # 'YYYY-MM-DD'
+    if data_hora and len(data_hora) >= 5:
+        return f"{date_part}T{data_hora}"
+    return f"{date_part}T00:00:00"
 
 
 def assign_municipios(features: list) -> list:
@@ -166,21 +186,27 @@ def main():
                 skipped_geo += 1
                 continue
 
-            date_val = attrs.get("data_data", "")
-            key = f"{lon_f}_{lat_f}_{date_val}"
+            record_id = item.get("id", "")
+            date_val  = attrs.get("data_data", "")
+            hora_val  = attrs.get("data_hora", "")
+            occurred  = build_occurred_at(date_val, hora_val)
 
-            if key not in seen_keys:
+            # Deduplicate: prefer id if available, else composite key for legacy
+            dedup_key = record_id if record_id else f"{lon_f}_{lat_f}_{date_val}"
+
+            if dedup_key not in seen_keys:
                 features.append({
                     "type": "Feature",
                     "geometry": {"type": "Point", "coordinates": [lon_f, lat_f]},
                     "properties": {
+                        "id":              record_id,
                         "infraction_type": penalty_id,
-                        "data_data":       date_val,
-                        "data_hora":       attrs.get("data_hora", ""),
-                        "autoridade":      attrs.get("autoridade", "Desconhecida")
+                        "occurredAt":      occurred,
+                        "autoridade":      attrs.get("autoridade", "Desconhecida"),
+                        "source":          "denuncia_estacionamento",
                     }
                 })
-                seen_keys.add(key)
+                seen_keys.add(dedup_key)
                 new_count += 1
 
         print(f"  {penalty_id}: done ({new_count} new so far)")
