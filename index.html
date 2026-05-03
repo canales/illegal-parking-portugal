@@ -512,7 +512,7 @@
   </div>
   <div class="stats">
     <div class="stat"><div class="number" id="stat-total">—</div><div class="label" data-i18n="stat_reports">Reports</div></div>
-    <div class="stat"><div class="number">2020–2026</div><div class="label" data-i18n="stat_period">Period</div></div>
+    <div class="stat"><div class="number" id="stat-period">—</div><div class="label" data-i18n="stat_period">Period</div></div>
     <div class="stat"><div class="number" id="stat-types">—</div><div class="label" data-i18n="stat_types">Types</div></div>
     <div class="stat" id="stat-update-wrap" style="display:none">
       <div class="number" id="stat-new-count" style="font-size:1rem">—</div>
@@ -562,6 +562,10 @@
   <label id="poi-wrap">
     <button id="btn-pois" class="toggle-btn" onclick="togglePois(); if(poiVisible) document.getElementById('poi-panel').classList.remove('collapsed');" data-i18n="poi_toggle">Sensitive locations</button>
   </label>
+  <label id="source-wrap">
+    <button id="btn-denuncia" class="toggle-btn source-btn active" onclick="toggleSource('denuncia')" title="Denúncia Estacionamento">Denúncia</button>
+    <button id="btn-imbecis"  class="toggle-btn source-btn active" onclick="toggleSource('imbecis')"  title="Imbecis" style="border-color:#F58231;color:#F58231">Imbecis</button>
+  </label>
 </div>
 
 <!-- POI legend — shown when POIs are visible -->
@@ -595,6 +599,7 @@
       <div id="panel-street-name">—</div>
       <div id="panel-meta"></div>
       <div id="panel-total"></div>
+      <div id="panel-source-note"></div>
     </div>
     <div id="panel-body">
       <div class="panel-section-title" data-i18n="panel_breakdown">Reports by type</div>
@@ -896,6 +901,7 @@ const LABELS = {
     faixa_de_rodagem2:                           'On carriageway (rural)',
     nao_encostado_direita_fora_localidades:      'Not parked to the right (rural)',
     cruzamento2:                                 'Within 50m of junction (rural)',
+    imbecis:                                     '🔗 Imbecis (all types)',
   },
   pt: {
     passeios:                                    'Passeio ou zona pedonal',
@@ -945,6 +951,7 @@ const LABELS = {
     faixa_de_rodagem2:                           'Na faixa de rodagem (fora de localidades)',
     nao_encostado_direita_fora_localidades:      'Não encostado à direita (fora de localidades)',
     cruzamento2:                                 'A menos de 50m de cruzamento (fora de localidades)',
+    imbecis:                                     '🔗 Imbecis (todos os tipos)',
   }
 };
 
@@ -1062,12 +1069,26 @@ let startMonthIdx = 0;        // left handle
 let endMonthIdx   = 0;        // right handle — both set in initTimeline()
 let playInterval  = null;
 
-const POINTS_URL  = 'data/infractions.geojson';
-const STREETS_URL = 'data/streets_matched.geojson';
-const POIS_URL    = 'data/pois.geojson';
+const POINTS_URL   = 'data/infractions.geojson';
+const STREETS_URL  = 'data/streets_matched.geojson';
+const IMBECIS_URL  = 'data/infractions_imbecis.geojson';
+const ISTREETS_URL = 'data/streets_imbecis.geojson';
+const POIS_URL     = 'data/pois.geojson';
 
-let poiData       = null;     // GeoJSON from pois.geojson
-let poiVisible    = false;    // current visibility state
+let poiData       = null;
+let poiVisible    = false;
+let imbecisData   = null;     // GeoJSON from infractions_imbecis.geojson
+let imbecisStreetData = null; // GeoJSON from streets_imbecis.geojson
+let showDenuncia  = true;     // source toggle state
+let showImbecis   = true;     // source toggle state
+
+// Returns all features from active sources (before time/type filtering)
+function getActiveFeatures() {
+  const out = [];
+  if (showDenuncia && allData)     out.push(...allData.features);
+  if (showImbecis  && imbecisData) out.push(...imbecisData.features);
+  return out;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -1076,10 +1097,10 @@ function t(key)    { return T[lang][key] || key; }
 function lbl(type) { return LABELS[lang][type] || type; }
 
 function getFilteredFeatures() {
-  if (!allData) return [];
+  if (!allData && !imbecisData) return [];
   const start = months[startMonthIdx];
   const end   = months[endMonthIdx];
-  return allData.features.filter(f => {
+  return getActiveFeatures().filter(f => {
     const typeOk = currentType === 'all' || f.properties.infraction_type === currentType;
     const m      = (f.properties.occurredAt || f.properties.data_data || '').substring(0, 7);
     const dateOk = m >= start && m <= end;
@@ -1134,24 +1155,42 @@ const STATS_URL   = 'data/stats.json';
 
 // ── Load data ──────────────────────────────────────────────────────────────
 map.on('load', async () => {
-  const [ptRes, stRes, statsRes, poisRes] = await Promise.allSettled([
+  const [ptRes, stRes, statsRes, poisRes, imRes, istRes] = await Promise.allSettled([
     fetch(POINTS_URL).then(r => r.ok ? r.json() : Promise.reject()),
     fetch(STREETS_URL).then(r => r.ok ? r.json() : Promise.reject()),
     fetch(STATS_URL).then(r => r.ok ? r.json() : Promise.reject()),
     fetch(POIS_URL).then(r => r.ok ? r.json() : Promise.reject()),
+    fetch(IMBECIS_URL).then(r => r.ok ? r.json() : Promise.reject()),
+    fetch(ISTREETS_URL).then(r => r.ok ? r.json() : Promise.reject()),
   ]);
 
   if (ptRes.status === 'fulfilled') {
     allData = ptRes.value;
+  }
+  if (imRes.status === 'fulfilled') {
+    imbecisData = imRes.value;
+    console.log(`[Imbecis] Loaded ${imbecisData.features.length} features`);
+  } else {
+    console.warn('[Imbecis] infractions_imbecis.geojson not found — toggle disabled');
+    showImbecis = false;
+    const btn = document.getElementById('btn-imbecis');
+    if (btn) { btn.disabled = true; btn.classList.remove('active'); }
+  }
+  if (allData || imbecisData) {
     populateFilters();
     initTimeline();
   }
+
   if (stRes.status === 'fulfilled') {
     streetData = stRes.value;
   } else {
     const btn = document.getElementById('btn-streets');
     btn.disabled = true;
     btn.title = t('streets_soon');
+  }
+  if (istRes.status === 'fulfilled') {
+    imbecisStreetData = istRes.value;
+    console.log(`[Imbecis streets] Loaded ${imbecisStreetData.features.length} segments`);
   }
 
   if (poisRes.status === 'fulfilled') {
@@ -1166,19 +1205,25 @@ map.on('load', async () => {
   await initAllLayers();
   updateStats();
   if (allData) await initRankings();
-  if (streetData) initStreetRankings();
+  if (streetData || imbecisStreetData) initStreetRankings();
 
-  // Render update badge if stats.json loaded successfully
+  // Render update badge — sum new records from both sources
+  let totalNew = 0;
+  let latestDate = '';
   if (statsRes.status === 'fulfilled') {
     const s = statsRes.value;
-    if (s.new_count > 0) {
-      // Format date nicely: "2026-03-21" → "March 21" / "21 de março"
-      const dateObj  = new Date(s.updated_date + 'T12:00:00Z');
-      const enDate   = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
-      const ptDate   = dateObj.toLocaleDateString('pt-PT', { day: 'numeric', month: 'long' });
-      window._statsData = { new_count: s.new_count, enDate, ptDate };
-      renderUpdateBadge();
-    }
+    totalNew   += s.new_count || 0;
+    latestDate  = s.updated_date || '';
+  }
+  if (imRes.status === 'fulfilled') {
+    totalNew += imbecisData?.metadata?.new_this_run || 0;
+  }
+  if (totalNew > 0 && latestDate) {
+    const dateObj = new Date(latestDate + 'T12:00:00Z');
+    const enDate  = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
+    const ptDate  = dateObj.toLocaleDateString('pt-PT', { day: 'numeric', month: 'long' });
+    window._statsData = { new_count: totalNew, enDate, ptDate };
+    renderUpdateBadge();
   }
 });
 
@@ -1259,7 +1304,7 @@ function setMapStyle(styleKey) {
 // LAYER INIT
 // ════════════════════════════════════════════════════════════════════════════
 function initPointsLayers() {
-  map.addSource('points', { type: 'geojson', data: { type: 'FeatureCollection', features: allData.features } });
+  map.addSource('points', { type: 'geojson', data: { type: 'FeatureCollection', features: getActiveFeatures() } });
 
   // Heatmap — visible from zoom 5
   map.addLayer({
@@ -1300,7 +1345,7 @@ function initPointsLayers() {
 function initHexLayer() {
   map.addSource('hexbins', {
     type: 'geojson',
-    data: computeHexbins(allData.features)
+    data: computeHexbins(getActiveFeatures())
   });
 
   map.addLayer({
@@ -1550,6 +1595,43 @@ async function initPoiLayer() {
   map.on('mouseleave', 'pois-circle', () => map.getCanvas().style.cursor = '');
 }
 
+function getImbecisCountForStreet(streetName) {
+  if (!imbecisStreetData) return 0;
+  const start = months[startMonthIdx];
+  const end   = months[endMonthIdx];
+  let count = 0;
+  for (const feat of imbecisStreetData.features) {
+    if (feat.properties.street_name !== streetName) continue;
+    // Use monthly_breakdown for period filtering if available
+    const mb = (() => { try { return JSON.parse(feat.properties.monthly_breakdown || '{}'); } catch(_) { return {}; } })();
+    if (Object.keys(mb).length) {
+      count += Object.entries(mb).reduce((s, [ym, n]) =>
+        (ym >= start && ym <= end ? s + n : s), 0);
+    } else {
+      count += feat.properties.count || 0;
+    }
+  }
+  return count;
+}
+
+function toggleSource(source) {
+  if (source === 'denuncia') {
+    // Prevent both being off
+    if (showDenuncia && !showImbecis) return;
+    showDenuncia = !showDenuncia;
+    document.getElementById('btn-denuncia').classList.toggle('active', showDenuncia);
+  } else {
+    if (showImbecis && !showDenuncia) return;
+    showImbecis = !showImbecis;
+    document.getElementById('btn-imbecis').classList.toggle('active', showImbecis);
+  }
+  // Rebuild timeline, filters and layers for new source combination
+  populateFilters();
+  initTimeline();
+  initAllLayers();
+  updateStats();
+}
+
 function togglePois() {
   poiVisible = !poiVisible;
   const vis  = poiVisible ? 'visible' : 'none';
@@ -1598,7 +1680,7 @@ function buildInfractionIndex(features) {
 // getFilteredFeatures() when called from applyAllFilters for timeline filtering.
 function filterPoiByRelevantInfractions(poi, radiusM, infractions = null) {
   if (!allData) return poi;
-  const features = infractions || allData.features;
+  const features = infractions || getActiveFeatures();
   const CELL     = 0.01;
   const margin   = Math.ceil((radiusM / 111000) / CELL) + 1;
   const idx      = buildInfractionIndex(features);
@@ -1730,9 +1812,9 @@ function syncOpacitySlider(view) {
 }
 // ════════════════════════════════════════════════════════════════════════════
 function populateFilters() {
-  // Count totals across ALL data (not filtered) so order is stable
+  // Count totals across ALL active data (not filtered) so order is stable
   const totals = {};
-  allData.features.forEach(f => {
+  getActiveFeatures().forEach(f => {
     const tp = f.properties.infraction_type;
     totals[tp] = (totals[tp] || 0) + 1;
   });
@@ -1889,10 +1971,12 @@ function renderUpdateBadge() {
 }
 
 function updateStats(count) {
-  if (!allData) return;
+  if (!allData && !imbecisData) return;
   const n = count !== undefined ? count : getFilteredFeatures().length;
   document.getElementById('stat-total').textContent = n.toLocaleString();
-  document.getElementById('stat-types').textContent = typeList.length;
+  // Count unique types across ALL active features (not just filtered period)
+  const activeTypes = new Set(getActiveFeatures().map(f => f.properties.infraction_type));
+  document.getElementById('stat-types').textContent = activeTypes.size;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1900,12 +1984,20 @@ function updateStats(count) {
 // ════════════════════════════════════════════════════════════════════════════
 function initTimeline() {
   const monthSet = new Set();
-  allData.features.forEach(f => {
+  getActiveFeatures().forEach(f => {
     const m = (f.properties.occurredAt || f.properties.data_data || '').substring(0, 7);
     if (m.length === 7) monthSet.add(m);
   });
   months = [...monthSet].sort();
   const max = months.length - 1;
+
+  // Update dynamic period banner
+  if (months.length) {
+    const yearStart = months[0].substring(0, 4);
+    const yearEnd   = months[max].substring(0, 4);
+    document.getElementById('stat-period').textContent =
+      yearStart === yearEnd ? yearStart : `${yearStart}–${yearEnd}`;
+  }
 
   const sStart = document.getElementById('slider-start');
   const sEnd   = document.getElementById('slider-end');
@@ -2092,7 +2184,7 @@ function getMuni(f) {
 }
 
 function buildMunicipalityStats(features) {
-  const src = features || allData.features;
+  const src = features || getActiveFeatures();
   const stats = {};
   src.forEach(f => {
     const muni = getMuni(f);
@@ -2138,7 +2230,7 @@ async function initRankings() {
   // descending with counts shown, matching the main infraction dropdown
   const sel = document.getElementById('rankings-type-filter');
   const totalCounts = {};
-  allData.features.forEach(f => {
+  getActiveFeatures().forEach(f => {
     const tp = f.properties.infraction_type;
     totalCounts[tp] = (totalCounts[tp] || 0) + 1;
   });
@@ -2310,7 +2402,7 @@ function computeMuniTrends(typeFilter) {
 
   // Aggregate per municipality per month
   const muniMonthly = {}; // { muni: { 'YYYY-MM': count } }
-  allData.features.forEach(f => {
+  getActiveFeatures().forEach(f => {
     const muni = getMuni(f);
     if (!muni) return;
     if (typeFilter !== 'all' && f.properties.infraction_type !== typeFilter) return;
@@ -2949,6 +3041,20 @@ function openPanelFromCluster(cl, bbox) {
   document.getElementById('panel-street-name').textContent = cl.name;
   document.getElementById('panel-total').innerHTML         = T[lang].panel_total(displayCount);
   document.getElementById('panel-meta').textContent        = formatPeriodLabel();
+
+  // Source breakdown when both toggles are on
+  let sourceNote = '';
+  if (showDenuncia && showImbecis && imbecisStreetData) {
+    const imbecisCount = getImbecisCountForStreet(cl.name);
+    if (imbecisCount > 0) {
+      sourceNote = `<div style="font-size:0.68rem;color:#888;margin-top:4px">
+        <span style="color:#4a9eff">Denúncia: ${displayCount - imbecisCount}</span>
+        · <span style="color:#F58231">Imbecis: ${imbecisCount}</span>
+      </div>`;
+    }
+  }
+  const sourceEl = document.getElementById('panel-source-note');
+  if (sourceEl) sourceEl.innerHTML = sourceNote;
 
   document.getElementById('breakdown-chart').innerHTML = sorted.map(([type, count]) => `
     <div class="breakdown-row">
