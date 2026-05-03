@@ -517,6 +517,7 @@
     <div class="stat" id="stat-update-wrap" style="display:none">
       <div class="number" id="stat-new-count" style="font-size:1rem">—</div>
       <div class="label" id="stat-update-label" style="white-space:nowrap">—</div>
+      <div class="label" id="stat-update-sources" style="white-space:nowrap;margin-top:1px">—</div>
     </div>
   </div>
   <div class="banner-right">
@@ -740,8 +741,9 @@ const T = {
     stat_reports:    'Reports',
     stat_period:     'Period',
     stat_types:      'Types',
-    stat_updated:    d => `Since ${d} update`,
-    stat_new:        n => `+${n} reports`,
+    stat_updated:    m => `${m} — reports so far`,
+    stat_new:        n => `+${n}`,
+    stat_sources:    (d, i) => `Denúncia +${d}  ·  Imbecis +${i}`,
     survey_btn:      'Take the Lisbon City Hall Survey →',
     filter_label:    'Infraction type:',
     source_label_ctrl: 'Source:',
@@ -804,8 +806,9 @@ const T = {
     stat_reports:    'Denúncias',
     stat_period:     'Período',
     stat_types:      'Tipos',
-    stat_updated:    d => `Atualizado a ${d}`,
-    stat_new:        n => `+${n} denúncias`,
+    stat_updated:    m => `${m} — denúncias até agora`,
+    stat_new:        n => `+${n}`,
+    stat_sources:    (d, i) => `Denúncia +${d}  ·  Imbecis +${i}`,
     survey_btn:      'Responder ao Inquérito da CML →',
     filter_label:    'Tipo de infração:',
     source_label_ctrl: 'Fonte:',
@@ -1216,24 +1219,7 @@ map.on('load', async () => {
   if (allData) await initRankings();
   if (streetData || imbecisStreetData) initStreetRankings();
 
-  // Render update badge — sum new records from both sources
-  let totalNew = 0;
-  let latestDate = '';
-  if (statsRes.status === 'fulfilled') {
-    const s = statsRes.value;
-    totalNew   += s.new_count || 0;
-    latestDate  = s.updated_date || '';
-  }
-  if (imRes.status === 'fulfilled') {
-    totalNew += imbecisData?.metadata?.new_this_run || 0;
-  }
-  if (totalNew > 0 && latestDate) {
-    const dateObj = new Date(latestDate + 'T12:00:00Z');
-    const enDate  = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
-    const ptDate  = dateObj.toLocaleDateString('pt-PT', { day: 'numeric', month: 'long' });
-    window._statsData = { new_count: totalNew, enDate, ptDate };
-    renderUpdateBadge();
-  }
+  renderUpdateBadge();
 });
 
 // ── Re-add all layers (called on initial load and after every style swap) ──
@@ -1642,6 +1628,7 @@ function toggleSource(source) {
   initAllLayers();
   initStreetRankings();
   updateStats();
+  renderUpdateBadge();
 }
 
 function togglePois() {
@@ -1997,11 +1984,30 @@ function buildFilteredStreetsData() {
 }
 
 function renderUpdateBadge() {
-  if (!window._statsData) return;
-  const { new_count, enDate, ptDate } = window._statsData;
-  const d = lang === 'pt' ? ptDate : enDate;
-  document.getElementById('stat-new-count').textContent  = T[lang].stat_new(new_count);
-  document.getElementById('stat-update-label').textContent = T[lang].stat_updated(d);
+  if (!allData && !imbecisData) return;
+
+  // Current calendar month as YYYY-MM
+  const now   = new Date();
+  const curYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const monthLabel = now.toLocaleDateString(lang === 'pt' ? 'pt-PT' : 'en-GB',
+    { month: 'long', year: 'numeric' });
+
+  // Count records in current month from each source
+  const countInMonth = (features) =>
+    (features || []).filter(f => {
+      const d = (f.properties.occurredAt || f.properties.data_data || '').substring(0, 7);
+      return d === curYM;
+    }).length;
+
+  const denCount = showDenuncia && allData    ? countInMonth(allData.features)    : 0;
+  const imCount  = showImbecis  && imbecisData ? countInMonth(imbecisData.features) : 0;
+  const total    = denCount + imCount;
+
+  if (total === 0) return; // nothing this month yet
+
+  document.getElementById('stat-new-count').textContent    = `${monthLabel}  +${total} ${lang === 'pt' ? 'denúncias até agora' : 'reports so far'}`;
+  document.getElementById('stat-update-label').textContent = T[lang].stat_sources(denCount, imCount);
+  document.getElementById('stat-update-sources').textContent = '';
   document.getElementById('stat-update-wrap').style.display = '';
 }
 
