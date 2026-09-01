@@ -6,59 +6,49 @@ Produces data/streets_matched.geojson for the map's "By street" view.
 
 Architecture
 ────────────
-1. GRID  — Portugal is divided into 0.1° × 0.1° cells (~10×10km each).
-           Only cells that contain at least MIN_POINTS infraction reports
-           are processed. This covers all of Portugal automatically without
-           a manual city list, and skips rural cells with no data.
+1. PBF    - The road network is extracted from a Geofabrik .osm.pbf file
+            (downloaded fresh each run by the workflow, ~700 MB for Portugal).
+            This replaces all Overpass API calls: no rate limits, no mirrors,
+            no timeouts, no cache eviction issues.
 
-2. CACHE — Each cell's OSM road network is saved as a GeoPackage file in
-           data/osm_cache/cell_{lat}_{lon}.gpkg after the first fetch.
-           On subsequent runs the cache is loaded from disk — Overpass is
-           never called again for that cell unless --refresh-cache is used.
-           GitHub Actions preserves the cache folder between runs via the
-           actions/cache step in update_data.yml.
+2. GRID   - Portugal is divided into 0.1 x 0.1 degree cells (~10x10km each).
+            Only cells that contain at least MIN_POINTS infraction reports
+            are processed.
 
-First run:  ~315 cells × ~12s = ~60 min (one-time cost).
-Later runs: ~2–4 min (snap only, no network calls).
+3. SNAP   - Each cell's infraction points are snapped to the nearest road
+            edge using sjoin_nearest, then aggregated per street segment.
+
+Runtime: ~5-10 min on GitHub Actions (PBF download: ~4s, processing: ~5min).
 
 Usage
 ─────
-    pip install osmnx==2.0.1 geopandas shapely pandas pyogrio
-    python scripts/street_match.py
-
-    # Force re-fetch all cells from Overpass (e.g. after OSM updates)
-    python scripts/street_match.py --refresh-cache
+    pip install pyrosm geopandas shapely pandas pyogrio
+    python scripts/street_match.py --pbf data/portugal-latest.osm.pbf
 
     # Single cell for quick local testing (provide lat/lon of cell origin)
-    python scripts/street_match.py --cell 38.7 -9.1
+    python scripts/street_match.py --pbf data/portugal-latest.osm.pbf --cell 38.7 -9.1
 """
 
-import os
 import re
 import json
-import time
 import math
-import signal
 import argparse
 from collections import Counter
-from typing import Optional
 from pathlib import Path
 
-import osmnx as ox
 import geopandas as gpd
 import pandas as pd
+from shapely.geometry import box
 
 # ── Paths ──────────────────────────────────────────────────────────────────
-ROOT       = Path(__file__).resolve().parent.parent
-CACHE_DIR  = ROOT / 'data' / 'osm_cache'
+ROOT = Path(__file__).resolve().parent.parent
 
-# Paths can be overridden via --input / --output CLI args (see main())
 _DEFAULT_IN   = ROOT / 'data' / 'infractions.geojson'
 _DEFAULT_OUT  = ROOT / 'data' / 'streets_matched.geojson'
 ROAD_LENGTHS_PATH = ROOT / 'data' / 'road_network_lengths.json'
 
 # ── Grid config ────────────────────────────────────────────────────────────
-CELL_SIZE  = 0.1    # degrees — ~10km × 10km at Portugal's latitude
+CELL_SIZE  = 0.1    # degrees, ~10km x 10km at Portugal's latitude
 MIN_POINTS = 1      # skip cells with no infraction points at all
 
 # Portugal bounding box (covers mainland + Azores + Madeira)
@@ -66,67 +56,41 @@ PT_LAT_MIN, PT_LAT_MAX = 29.0, 43.0
 PT_LON_MIN, PT_LON_MAX = -32.0, -6.0
 
 # ── Snap config ────────────────────────────────────────────────────────────
-SNAP_THRESHOLD_M   = 100   # increased from 50m — wider avenues and GPS drift require more tolerance
-FETCH_TIMEOUT_SECS = 90    # per-cell timeout — fail fast so more cells complete overall
-DELAY_BETWEEN_SECS = 5     # reduced from 15s — saves ~50min per full run
-MAX_RETRIES        = 1     # fail fast and skip; cached cells fill gaps on next run
+SNAP_THRESHOLD_M = 100  # GPS drift + wide avenues need generous tolerance
 
-# ── osmnx 2.x settings ────────────────────────────────────────────────────
-ox.settings.log_console       = False
-ox.settings.use_cache         = False
-ox.settings.requests_timeout  = 120
-ox.settings.overpass_memory   = 536870912   # 512 MB server-side maxsize
-# max_query_area_size left at default (2,500,000,000 m²) — our 0.1° cells
-# are ~100 km², well below the threshold, so no subdivision occurs.
-ox.settings.http_user_agent   = 'street_match.py/2.0 (illegal-parking-portugal; GitHub Actions)'
-
-
-# ── Timeout helper ─────────────────────────────────────────────────────────
-class _Timeout(Exception):
-    pass
-
-def _arm_timeout(secs):
-    try:
-        signal.signal(signal.SIGALRM, lambda s, f: (_ for _ in ()).throw(_Timeout()))
-        signal.alarm(secs)
-    except AttributeError:
-        pass  # Windows
-
-def _disarm_timeout():
-    try:
-        signal.alarm(0)
-    except AttributeError:
-        pass
+# Highway types to EXCLUDE (same logic as the old Overpass custom_filter).
+# We keep everything except pure pedestrian infrastructure and construction.
+HIGHWAY_EXCLUDE = {
+    'footway', 'path', 'steps', 'corridor',
+    'elevator', 'escalator', 'construction',
+}
 
 
 # ── Grid helpers ───────────────────────────────────────────────────────────
 def cell_origin(lat: float, lon: float) -> tuple:
     """
-    Return the bottom-left corner of the 0.1° cell containing (lat, lon).
+    Return the bottom-left corner of the 0.1 degree cell containing (lat, lon).
 
     IMPORTANT: must use math.floor, not int().
     int() truncates toward zero, so int(-91.5) = -91.
     math.floor(-91.5) = -92, which is correct for negative longitudes.
     Without this, a point at lon=-9.19 gets assigned to cell -9.1
     (lon -9.1 to -9.0, east of Lisbon) instead of cell -9.2 (correct).
-    The points and OSM network end up in completely different places.
     """
     return (
         round(math.floor(lat / CELL_SIZE) * CELL_SIZE, 2),
         round(math.floor(lon / CELL_SIZE) * CELL_SIZE, 2)
     )
 
+
 def cell_bbox(clat: float, clon: float) -> tuple:
     """Return (lat_min, lon_min, lat_max, lon_max) for a cell origin."""
     return (clat, clon, round(clat + CELL_SIZE, 2), round(clon + CELL_SIZE, 2))
 
-def cell_cache_path(clat: float, clon: float) -> Path:
-    return CACHE_DIR / f"cell_{clat:.1f}_{clon:.1f}.gpkg"
-
 
 # ── Data loading ───────────────────────────────────────────────────────────
-def load_infractions() -> pd.DataFrame:
-    with open(IN_PATH, 'r', encoding='utf-8') as f:
+def load_infractions(in_path: Path) -> pd.DataFrame:
+    with open(in_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     rows = []
     for feat in data['features']:
@@ -134,13 +98,12 @@ def load_infractions() -> pd.DataFrame:
         if not (PT_LAT_MIN <= lat <= PT_LAT_MAX and PT_LON_MIN <= lon <= PT_LON_MAX):
             continue
         p = feat['properties']
-        # Both sources now use occurredAt; fall back to data_data for legacy records
         date_str = p.get('occurredAt') or p.get('data_data', '')
         rows.append({
             'lat': lat, 'lon': lon,
             'infraction_type': p.get('infraction_type', ''),
             'year':  date_str[:4],
-            'month': date_str[:7],   # YYYY-MM for monthly breakdown
+            'month': date_str[:7],
         })
     df = pd.DataFrame(rows)
     print(f"Loaded {len(df)} infraction points (within Portugal bbox).")
@@ -149,7 +112,7 @@ def load_infractions() -> pd.DataFrame:
 
 def build_grid(df: pd.DataFrame) -> dict:
     """
-    Assign each point to a 0.1° grid cell.
+    Assign each point to a 0.1 degree grid cell.
     Returns {(clat, clon): sub-DataFrame} for cells with >= MIN_POINTS.
     """
     df = df.copy()
@@ -160,89 +123,93 @@ def build_grid(df: pd.DataFrame) -> dict:
     for (clat, clon), group in df.groupby(['clat', 'clon']):
         if len(group) >= MIN_POINTS:
             cells[(clat, clon)] = group
-    print(f"Grid: {len(cells)} cells with ≥{MIN_POINTS} points "
+    print(f"Grid: {len(cells)} cells with >={MIN_POINTS} points "
           f"(skipped {df.groupby(['clat','clon']).ngroups - len(cells)} sparse cells).")
     return cells
 
 
-# ── OSM network — fetch or load from cache ─────────────────────────────────
-def get_network(clat: float, clon: float, refresh: bool) -> Optional[gpd.GeoDataFrame]:
-    cache_path = cell_cache_path(clat, clon)
+# ── OSM road network from PBF ─────────────────────────────────────────────
+def load_roads_from_pbf(pbf_path: Path) -> gpd.GeoDataFrame:
+    """
+    Read the full road network from a Geofabrik .osm.pbf file using pyrosm.
+    Returns a GeoDataFrame of road edges in EPSG:4326 with 'name' and
+    'highway' columns, filtered and deduplicated.
+    """
+    from pyrosm import OSM
 
-    # Cache hit
-    if cache_path.exists() and not refresh:
+    print(f"Loading road network from {pbf_path.name}...")
+    osm = OSM(str(pbf_path))
+
+    # get_network('driving+service') includes service roads where illegal
+    # parking is common. We then manually filter out pure pedestrian types.
+    roads = osm.get_network(network_type='driving+service')
+    print(f"  Raw edges from PBF: {len(roads)}")
+
+    # Filter out highway types we don't want
+    if 'highway' in roads.columns:
+        roads = roads[~roads['highway'].isin(HIGHWAY_EXCLUDE)].copy()
+
+    # Filter out private/no access roads
+    if 'access' in roads.columns:
+        roads = roads[~roads['access'].isin(['private', 'no'])].copy()
+
+    # Keep only the columns we need (reduces memory significantly)
+    keep_cols = ['geometry']
+    for col in ['name', 'highway']:
+        if col in roads.columns:
+            keep_cols.append(col)
+    roads = roads[keep_cols].copy()
+
+    # Ensure CRS
+    if roads.crs is None:
+        roads = roads.set_crs("EPSG:4326")
+    elif roads.crs.to_epsg() != 4326:
+        roads = roads.to_crs("EPSG:4326")
+
+    # Explode MultiLineStrings into individual LineStrings.
+    # pyrosm returns some roads as MultiLineString (e.g. roads with gaps or
+    # islands). The dedup logic and sjoin_nearest both need single LineStrings.
+    roads = roads.explode(index_parts=False).reset_index(drop=True)
+
+    # Deduplicate bidirectional edges.
+    # pyrosm (like osmnx) can return two directed edges for two-way roads,
+    # one per direction of travel, with identical geometry but reversed node
+    # order. We deduplicate by treating each edge as an unordered pair of
+    # its start and end coordinates.
+    def _edge_key(g):
         try:
-            edges = gpd.read_file(cache_path, layer='edges')
-            # Restore CRS — GeoPackage preserves it but let's be explicit
-            if edges.crs is None:
-                edges = edges.set_crs("EPSG:4326")
-            return edges
-        except Exception as e:
-            print(f"    Cache read failed ({e}), re-fetching...")
+            return frozenset([g.coords[0], g.coords[-1]])
+        except (NotImplementedError, IndexError):
+            return id(g)  # fallback for degenerate geometries
 
-    # Cache miss — fetch from Overpass
+    roads['_edge_key'] = roads.geometry.apply(_edge_key)
+    before = len(roads)
+    roads = roads.drop_duplicates(subset='_edge_key').drop(columns='_edge_key')
+    roads = roads.reset_index(drop=True)
+    print(f"  After explode + dedup: {len(roads)} edges (removed {before - len(roads)} duplicates)")
+
+    # Build spatial index (used by clip operations later)
+    roads.sindex
+    return roads
+
+
+def clip_roads_to_cell(all_roads: gpd.GeoDataFrame, clat: float, clon: float) -> gpd.GeoDataFrame:
+    """
+    Extract road edges that intersect a given grid cell.
+    Uses the spatial index for fast bbox filtering.
+    """
     lat_min, lon_min, lat_max, lon_max = cell_bbox(clat, clon)
-    ox_bbox = (lon_min, lat_min, lon_max, lat_max)  # osmnx 2.x: (W, S, E, N)
+    cell_box = box(lon_min, lat_min, lon_max, lat_max)
 
-    for attempt in range(1, MAX_RETRIES + 1):
-        print(f"    Overpass fetch (attempt {attempt}/{MAX_RETRIES})...", end=' ', flush=True)
-        _arm_timeout(FETCH_TIMEOUT_SECS)
-        try:
-            # Use a custom filter instead of network_type='drive' to include
-            # pedestrian zones, living streets and service roads where illegal
-            # parking is common but cars cannot legally drive through.
-            # Excludes pure footways, steps and paths to avoid noise.
-            custom_filter = (
-                '["highway"]["area"!~"yes"]'
-                '["highway"!~"footway|path|steps|corridor|elevator|escalator|construction"]'
-                '["access"!~"private|no"]'
-            )
-            G     = ox.graph_from_bbox(bbox=ox_bbox, custom_filter=custom_filter, simplify=True, retain_all=True)
-            edges = ox.graph_to_gdfs(G, nodes=False)
+    # Use spatial index for fast candidate selection
+    candidates_idx = list(all_roads.sindex.intersection(cell_box.bounds))
+    if not candidates_idx:
+        return gpd.GeoDataFrame(columns=all_roads.columns, crs=all_roads.crs)
 
-            # Deduplicate bidirectional edges.
-            # OSM/osmnx represents two-way roads as two directed edges — one per
-            # direction of travel — with identical geometry but reversed node order.
-            # This causes the same physical street segment to appear twice in the
-            # GeoDataFrame, doubling infraction counts when reports are snapped to it.
-            # We deduplicate by treating each edge as an unordered pair of its
-            # start and end coordinates (a frozenset), keeping only one direction.
-            edges = edges.reset_index(drop=True)
-            edges['_edge_key'] = edges.geometry.apply(
-                lambda g: frozenset([g.coords[0], g.coords[-1]])
-            )
-            edges = edges.drop_duplicates(subset='_edge_key').drop(columns='_edge_key')
-            edges = edges.reset_index(drop=True)
-            print(f"{len(edges)} edges (after dedup).")
-
-            # Save to cache
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            edges_save = edges.to_crs("EPSG:4326").copy()
-            # Keep only the columns we need — reduces file size significantly
-            keep = ['geometry'] + [c for c in ['name','highway'] if c in edges_save.columns]
-            edges_save[keep].to_file(str(cache_path), driver='GPKG', layer='edges')
-            print(f"    Cached → {cache_path.name}")
-            return edges
-
-        except _Timeout:
-            print(f"TIMED OUT after {FETCH_TIMEOUT_SECS}s.")
-        except Exception as e:
-            err = str(e).lower()
-            print(f"FAILED ({type(e).__name__}: {e})")
-            transient = any(t in err for t in ['429','503','504','timeout','too many','connection'])
-            if not transient:
-                _disarm_timeout()
-                return None
-        finally:
-            _disarm_timeout()
-
-        if attempt < MAX_RETRIES:
-            wait = DELAY_BETWEEN_SECS * (2 ** (attempt - 1))
-            print(f"    Retrying in {wait}s...")
-            time.sleep(wait)
-
-    print(f"    All {MAX_RETRIES} attempts failed — skipping cell.")
-    return None
+    candidates = all_roads.iloc[candidates_idx]
+    mask = candidates.intersects(cell_box)
+    result = candidates[mask].copy().reset_index(drop=True)
+    return result
 
 
 # ── Snap & aggregate ───────────────────────────────────────────────────────
@@ -250,10 +217,10 @@ def utm_epsg(clon: float) -> str:
     """
     Return the EPSG code for the UTM zone covering a given longitude.
     Works for all of Portugal including Azores (zone 26) and Madeira (zone 28).
-    EPSG:3763 only covers mainland — this is the correct replacement.
+    EPSG:3763 only covers mainland.
     """
     zone = int((clon + 180) / 6) + 1
-    return f"EPSG:326{zone:02d}"   # Northern Hemisphere (all of Portugal)
+    return f"EPSG:326{zone:02d}"
 
 
 def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: float):
@@ -261,22 +228,18 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: flo
     Snap infraction points to nearest road edge using sjoin_nearest.
 
     WHY sjoin_nearest instead of a KDTree on midpoints:
-    The previous approach built a KDTree from edge midpoints and measured
-    distance from each point to the nearest midpoint. A point 10m from the
-    *end* of a 500m street segment is ~260m from its midpoint — well above
-    the 50m threshold, so it was rejected. sjoin_nearest measures distance
-    to the actual line geometry, so any point within 50m of any part of any
-    edge gets matched correctly.
+    The midpoint approach rejects points near the ends of long street segments
+    because they're far from the midpoint. sjoin_nearest measures distance
+    to the actual line geometry, so any point within threshold of any part of
+    any edge gets matched correctly.
 
     WHY per-cell UTM instead of EPSG:3763:
     EPSG:3763 (Portugal TM06) is only valid for mainland Portugal. For Azores
-    cells (~-25° lon) and Madeira cells (~-17° lon) it produces wildly wrong
-    metric coordinates, making all distances appear huge. We compute the
-    correct UTM zone from the cell's longitude instead.
+    (~-25 deg lon) and Madeira (~-17 deg lon) it produces wrong metric
+    coordinates. We compute the correct UTM zone from the cell's longitude.
     """
     epsg = utm_epsg(clon)
 
-    # Reset index so edge positions are 0, 1, 2… (iloc-safe for build_features)
     edges_proj = edges.reset_index(drop=True).to_crs(epsg)
 
     pts = gpd.GeoDataFrame(
@@ -285,12 +248,7 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: flo
         crs="EPSG:4326"
     ).to_crs(epsg)
 
-    # sjoin_nearest: for each point find the nearest edge within SNAP_THRESHOLD_M.
-    # When a point is equidistant from two edges (e.g. at an intersection),
-    # sjoin_nearest returns one row per match. We deduplicate on the original
-    # point index (not on attribute values) so each report counts exactly once
-    # while legitimate duplicate-coordinate reports are preserved.
-    pts = pts.reset_index(drop=True)   # ensure clean 0-based index
+    pts = pts.reset_index(drop=True)
     joined = gpd.sjoin_nearest(
         pts,
         edges_proj[['geometry']],
@@ -321,7 +279,7 @@ def snap_and_aggregate(df_cell: pd.DataFrame, edges: gpd.GeoDataFrame, clon: flo
             'monthly_breakdown': dict(Counter(months))
         }
 
-    return agg, len(snapped), edges_proj  # return edges_proj so build_features uses same index
+    return agg, len(snapped), edges_proj
 
 
 def accumulate_road_lengths(edges_proj: gpd.GeoDataFrame,
@@ -329,32 +287,22 @@ def accumulate_road_lengths(edges_proj: gpd.GeoDataFrame,
                             road_km_acc: dict) -> None:
     """
     Accumulate total road network length (km) per municipality from ALL edges
-    in the cell — not just matched ones. This gives the correct denominator
-    for per-km-road rankings.
-
-    Uses the projected CRS (edges_proj) for accurate metric length calculation,
-    then joins edge midpoints to municipality polygons to assign each edge to
-    a municipality.
-
-    Results are accumulated in-place into road_km_acc: {municipio: km}.
+    in the cell (not just matched ones). Gives the correct denominator for
+    per-km-road rankings.
     """
     if munis is None:
         return
     try:
-        # Compute length of each edge in metres (projected CRS is metric)
         edges_proj = edges_proj.reset_index(drop=True).copy()
         edges_proj['_len_m'] = edges_proj.geometry.length
 
-        # Compute midpoints in projected CRS for spatial join
         mids = edges_proj.copy()
         mids['geometry'] = edges_proj.geometry.interpolate(0.5, normalized=True)
         mids_wgs = mids[['geometry', '_len_m']].to_crs('EPSG:4326')
 
-        # Join midpoints to municipality polygons
         joined = gpd.sjoin(mids_wgs, munis[['geometry', 'municipio']],
                            how='left', predicate='within')
 
-        # Accumulate km per municipality
         for _, row in joined.iterrows():
             muni = row.get('municipio')
             if not isinstance(muni, str):
@@ -362,36 +310,30 @@ def accumulate_road_lengths(edges_proj: gpd.GeoDataFrame,
             road_km_acc[muni] = road_km_acc.get(muni, 0) + row['_len_m'] / 1000
 
     except Exception as e:
-        print(f"    ⚠  road length accumulation failed ({e})")
+        print(f"    Warning: road length accumulation failed ({e})")
 
 
 def load_municipios() -> 'gpd.GeoDataFrame | None':
     """Load municipality boundaries for spatial join. Returns None if missing."""
     munis_path = ROOT / 'data' / 'municipios.geojson'
     if not munis_path.exists():
-        print("⚠  municipios.geojson not found — street municipio tags will be skipped.")
+        print("Warning: municipios.geojson not found. Street municipio tags will be skipped.")
         return None
     try:
         munis = gpd.read_file(str(munis_path))[['geometry', 'NAME_2']].copy()
-        # GADM NAME_2 has no spaces — insert space before each capital following lowercase
         munis['NAME_2'] = munis['NAME_2'].apply(
             lambda n: re.sub(r'(?<=[a-záàâãéèêíóôõúç])([A-ZÁÀÂÃÉÈÊÍÓÔÕÚÇ])', r' \1', n) if isinstance(n, str) else n
         )
         munis = munis.rename(columns={'NAME_2': 'municipio'})
         return munis.to_crs("EPSG:4326")
     except Exception as e:
-        print(f"⚠  Could not load municipios.geojson ({e}) — skipping municipio tags.")
+        print(f"Warning: Could not load municipios.geojson ({e}). Skipping municipio tags.")
         return None
 
 
 def build_features(edges_proj: gpd.GeoDataFrame, agg: dict, munis: 'gpd.GeoDataFrame | None') -> list:
-    # edges_proj already has a reset integer index from snap_and_aggregate.
-    # Convert back to WGS84 for the output GeoJSON.
     edges_wgs = edges_proj.to_crs("EPSG:4326")
 
-    # Spatial join: tag each edge with its municipality using midpoint.
-    # Midpoints are computed in the projected CRS (edges_proj) where interpolate
-    # is geometrically correct, then converted to WGS84 for the spatial join.
     muni_by_edge = {}
     if munis is not None:
         try:
@@ -401,9 +343,9 @@ def build_features(edges_proj: gpd.GeoDataFrame, agg: dict, munis: 'gpd.GeoDataF
             joined = gpd.sjoin(mids[['geometry']], munis, how='left', predicate='within')
             muni_by_edge = joined['municipio'].to_dict()
         except Exception as e:
-            print(f"    ⚠  municipio join failed ({e})")
+            print(f"    Warning: municipio join failed ({e})")
 
-    features  = []
+    features = []
     for edge_idx, stats in agg.items():
         try:
             row  = edges_wgs.iloc[edge_idx]
@@ -436,11 +378,10 @@ def build_features(edges_proj: gpd.GeoDataFrame, agg: dict, munis: 'gpd.GeoDataF
 
 # ── Main ───────────────────────────────────────────────────────────────────
 def main():
-    global IN_PATH, OUT_PATH
-
-    parser = argparse.ArgumentParser(description='Portugal grid street matching with OSM cache')
-    parser.add_argument('--refresh-cache', action='store_true',
-                        help='Re-fetch all cells from Overpass, ignoring the cache')
+    parser = argparse.ArgumentParser(
+        description='Snap infraction points to OSM road network (from Geofabrik PBF)')
+    parser.add_argument('--pbf', required=True,
+                        help='Path to the Geofabrik .osm.pbf file (e.g. data/portugal-latest.osm.pbf)')
     parser.add_argument('--cell', nargs=2, type=float, metavar=('LAT', 'LON'),
                         help='Process a single cell origin only, e.g. --cell 38.7 -9.1')
     parser.add_argument('--input',  default=str(_DEFAULT_IN),
@@ -449,81 +390,74 @@ def main():
                         help='Output streets GeoJSON (default: data/streets_matched.geojson)')
     args = parser.parse_args()
 
-    IN_PATH  = Path(args.input)
-    OUT_PATH = Path(args.output)
+    in_path  = Path(args.input)
+    out_path = Path(args.output)
+    pbf_path = Path(args.pbf)
 
-    df_all = load_infractions()
-    grid   = build_grid(df_all)
-    munis  = load_municipios()
+    if not pbf_path.exists():
+        print(f"Error: PBF file not found: {pbf_path}")
+        return
+
+    # Load everything up front
+    df_all    = load_infractions(in_path)
+    grid      = build_grid(df_all)
+    munis     = load_municipios()
+    all_roads = load_roads_from_pbf(pbf_path)
 
     # Filter to a single test cell if requested
     if args.cell:
         clat, clon = round(args.cell[0], 2), round(args.cell[1], 2)
         if (clat, clon) not in grid:
-            print(f"No data in cell ({clat}, {clon}) — or fewer than {MIN_POINTS} points.")
+            print(f"No data in cell ({clat}, {clon}), or fewer than {MIN_POINTS} points.")
             return
         grid = {(clat, clon): grid[(clat, clon)]}
         print(f"Single-cell mode: ({clat}, {clon})")
 
-    if args.refresh_cache:
-        print("⚠  Cache refresh mode — all cells will be re-fetched from Overpass.")
-
+    # Process cells
     all_features = []
-    road_km_acc  = {}   # {municipio: total_km} — accumulates across all cells
-    succeeded = skipped = cached_hits = 0
-    cells_list = sorted(grid.items())  # sorted for deterministic order
+    road_km_acc  = {}
+    succeeded = skipped = 0
+    cells_list = sorted(grid.items())
 
     for i, ((clat, clon), df_cell) in enumerate(cells_list):
-        cache_path = cell_cache_path(clat, clon)
-        from_cache = cache_path.exists() and not args.refresh_cache
+        print(f"\n-- Cell ({clat:.1f}, {clon:.1f})  [{i+1}/{len(cells_list)}]  "
+              f"({len(df_cell)} pts) --")
 
-        print(f"\n── Cell ({clat:.1f}, {clon:.1f})  [{i+1}/{len(cells_list)}]  "
-              f"{'📦 cache' if from_cache else '🌐 fetch'}  "
-              f"({len(df_cell)} pts) ──")
-
-        edges = get_network(clat, clon, refresh=args.refresh_cache)
-
-        if edges is None:
+        edges = clip_roads_to_cell(all_roads, clat, clon)
+        if edges.empty:
+            print("  No road edges in cell. Skipping.")
             skipped += 1
             continue
+
+        print(f"  {len(edges)} road edges in cell.")
 
         agg, snapped, edges_proj = snap_and_aggregate(df_cell, edges, clon)
         features = build_features(edges_proj, agg, munis)
         all_features.extend(features)
 
-        # Accumulate total road network length for ALL edges in this cell
-        # (not just matched ones) — used for accurate per-km-road rankings
         accumulate_road_lengths(edges_proj, munis, road_km_acc)
 
-        print(f"  {snapped}/{len(df_cell)} snapped → {len(features)} segments")
+        print(f"  {snapped}/{len(df_cell)} snapped, {len(features)} segments")
         succeeded += 1
-        if from_cache:
-            cached_hits += 1
 
-        # Polite delay only when actually hitting Overpass
-        if not from_cache and i < len(cells_list) - 1:
-            print(f"  Pausing {DELAY_BETWEEN_SECS}s...")
-            time.sleep(DELAY_BETWEEN_SECS)
+    print(f"\n{'='*60}")
+    print(f"  Cells processed: {succeeded}")
+    print(f"  Cells skipped:   {skipped}")
+    print(f"  Street segments: {len(all_features)}")
 
-    print(f"\n{'═'*60}")
-    print(f"  Cells processed:  {succeeded}  ({cached_hits} from cache, "
-          f"{succeeded - cached_hits} from Overpass)")
-    print(f"  Cells skipped:    {skipped}")
-    print(f"  Street segments:  {len(all_features)}")
-
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUT_PATH, 'w', encoding='utf-8') as f:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, 'w', encoding='utf-8') as f:
         json.dump({"type": "FeatureCollection", "features": all_features}, f, ensure_ascii=False)
 
-    size_kb = OUT_PATH.stat().st_size / 1024
-    print(f"✓ Saved → {OUT_PATH} ({size_kb:.0f} KB)")
+    size_kb = out_path.stat().st_size / 1024
+    print(f"Saved {out_path} ({size_kb:.0f} KB)")
 
     # Save road network lengths only for the main infractions run
-    if IN_PATH == _DEFAULT_IN:
+    if in_path == _DEFAULT_IN:
         road_km_rounded = {m: round(km, 3) for m, km in road_km_acc.items()}
         with open(ROAD_LENGTHS_PATH, 'w', encoding='utf-8') as f:
             json.dump(road_km_rounded, f, ensure_ascii=False, indent=2)
-        print(f"✓ Saved road lengths → {ROAD_LENGTHS_PATH} ({len(road_km_rounded)} municipalities)")
+        print(f"Saved road lengths: {ROAD_LENGTHS_PATH} ({len(road_km_rounded)} municipalities)")
 
 
 if __name__ == "__main__":
