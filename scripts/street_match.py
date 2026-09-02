@@ -166,27 +166,22 @@ def load_roads_from_pbf(pbf_path: Path) -> gpd.GeoDataFrame:
     elif roads.crs.to_epsg() != 4326:
         roads = roads.to_crs("EPSG:4326")
 
-    # Explode MultiLineStrings into individual LineStrings.
-    # pyrosm returns some roads as MultiLineString (e.g. roads with gaps or
-    # islands). The dedup logic and sjoin_nearest both need single LineStrings.
-    roads = roads.explode(index_parts=False).reset_index(drop=True)
-
-    # Deduplicate bidirectional edges.
-    # pyrosm (like osmnx) can return two directed edges for two-way roads,
-    # one per direction of travel, with identical geometry but reversed node
-    # order. We deduplicate by treating each edge as an unordered pair of
-    # its start and end coordinates.
+    # Deduplicate bidirectional edges (if any).
+    # pyrosm doesn't typically produce directional duplicates like osmnx,
+    # but we check anyway. We use start/end coords for LineStrings and
+    # fall back to object id for MultiLineStrings (which are rare).
     def _edge_key(g):
         try:
             return frozenset([g.coords[0], g.coords[-1]])
         except (NotImplementedError, IndexError):
-            return id(g)  # fallback for degenerate geometries
+            return id(g)
 
+    roads = roads.reset_index(drop=True)
     roads['_edge_key'] = roads.geometry.apply(_edge_key)
     before = len(roads)
     roads = roads.drop_duplicates(subset='_edge_key').drop(columns='_edge_key')
     roads = roads.reset_index(drop=True)
-    print(f"  After explode + dedup: {len(roads)} edges (removed {before - len(roads)} duplicates)")
+    print(f"  After filtering + dedup: {len(roads)} edges (removed {before - len(roads)} duplicates)")
 
     # Build spatial index (used by clip operations later)
     roads.sindex
