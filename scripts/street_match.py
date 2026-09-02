@@ -38,7 +38,6 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import box
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
@@ -128,22 +127,84 @@ def build_grid(df: pd.DataFrame) -> dict:
     return cells
 
 
-# ── OSM road network from PBF ─────────────────────────────────────────────
-def load_roads_from_pbf(pbf_path: Path) -> gpd.GeoDataFrame:
+# ── OSM road network from PBF (per-cell osmium extraction) ────────────────
+#
+# The old approach loaded all of Portugal into memory with pyrosm (~7 GB peak).
+# This OOM-killed the GitHub Actions runner (7 GB limit).
+#
+# The new approach extracts each cell's bbox from the PBF using osmium, a
+# streaming C++ tool that uses constant memory (~50 MB) regardless of source
+# file size. Each cell extract takes ~2-4s and produces a tiny .osm.pbf
+# (usually <1 MB) that pyrosm can parse into a GeoDataFrame instantly.
+#
+# Total memory footprint: ~200-400 MB (one cell's roads at a time).
+# Total runtime: ~320 cells × ~4s = ~20 min on Actions.
+
+import subprocess
+import tempfile
+
+
+def extract_cell_pbf(source_pbf: Path, clat: float, clon: float, out_pbf: Path) -> bool:
     """
-    Read the full road network from a Geofabrik .osm.pbf file using pyrosm.
-    Returns a GeoDataFrame of road edges in EPSG:4326 with 'name' and
-    'highway' columns, filtered and deduplicated.
+    Use osmium to extract a bbox slice from the source PBF into a smaller PBF.
+    Returns True on success. osmium must be installed on the runner
+    (apt-get install osmium-tool).
+    """
+    lat_min, lon_min, lat_max, lon_max = cell_bbox(clat, clon)
+    # osmium bbox format: left,bottom,right,top (i.e. lon_min,lat_min,lon_max,lat_max)
+    bbox_str = f"{lon_min},{lat_min},{lon_max},{lat_max}"
+
+    try:
+        result = subprocess.run(
+            ['osmium', 'extract',
+             '--bbox', bbox_str,
+             '--strategy', 'smart',
+             '--overwrite',
+             '-o', str(out_pbf),
+             str(source_pbf)],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            print(f"    osmium failed: {result.stderr.strip()[:200]}")
+            return False
+        return True
+    except subprocess.TimeoutExpired:
+        print(f"    osmium extract timed out after 60s")
+        return False
+    except FileNotFoundError:
+        print("    ERROR: osmium not installed. Run: apt-get install -y osmium-tool")
+        raise
+
+
+def load_roads_for_cell(source_pbf: Path, clat: float, clon: float,
+                         tmpdir: Path) -> gpd.GeoDataFrame:
+    """
+    Extract a single cell's road network from the source PBF.
+    Returns an empty GeoDataFrame on any failure (missing data, extract errors).
     """
     from pyrosm import OSM
 
-    print(f"Loading road network from {pbf_path.name}...")
-    osm = OSM(str(pbf_path))
+    cell_pbf = tmpdir / f"cell_{clat:.1f}_{clon:.1f}.osm.pbf"
+    if not extract_cell_pbf(source_pbf, clat, clon, cell_pbf):
+        return gpd.GeoDataFrame(columns=['geometry', 'name', 'highway'],
+                                geometry='geometry', crs="EPSG:4326")
 
-    # get_network('driving+service') includes service roads where illegal
-    # parking is common. We then manually filter out pure pedestrian types.
-    roads = osm.get_network(network_type='driving+service')
-    print(f"  Raw edges from PBF: {len(roads)}")
+    try:
+        osm = OSM(str(cell_pbf))
+        roads = osm.get_network(network_type='driving+service')
+    except Exception as e:
+        # Empty cells (ocean, remote islands) can produce PBFs with no roads.
+        # pyrosm raises on these; we treat as empty result.
+        print(f"    pyrosm couldn't parse cell (likely empty): {type(e).__name__}")
+        cell_pbf.unlink(missing_ok=True)
+        return gpd.GeoDataFrame(columns=['geometry', 'name', 'highway'],
+                                geometry='geometry', crs="EPSG:4326")
+
+    cell_pbf.unlink(missing_ok=True)  # cleanup
+
+    if roads is None or len(roads) == 0:
+        return gpd.GeoDataFrame(columns=['geometry', 'name', 'highway'],
+                                geometry='geometry', crs="EPSG:4326")
 
     # Filter out highway types we don't want
     if 'highway' in roads.columns:
@@ -153,23 +214,19 @@ def load_roads_from_pbf(pbf_path: Path) -> gpd.GeoDataFrame:
     if 'access' in roads.columns:
         roads = roads[~roads['access'].isin(['private', 'no'])].copy()
 
-    # Keep only the columns we need (reduces memory significantly)
+    # Keep only the columns we need
     keep_cols = ['geometry']
     for col in ['name', 'highway']:
         if col in roads.columns:
             keep_cols.append(col)
     roads = roads[keep_cols].copy()
 
-    # Ensure CRS
     if roads.crs is None:
         roads = roads.set_crs("EPSG:4326")
     elif roads.crs.to_epsg() != 4326:
         roads = roads.to_crs("EPSG:4326")
 
-    # Deduplicate bidirectional edges (if any).
-    # pyrosm doesn't typically produce directional duplicates like osmnx,
-    # but we check anyway. We use start/end coords for LineStrings and
-    # fall back to object id for MultiLineStrings (which are rare).
+    # Deduplicate bidirectional edges
     def _edge_key(g):
         try:
             return frozenset([g.coords[0], g.coords[-1]])
@@ -178,33 +235,10 @@ def load_roads_from_pbf(pbf_path: Path) -> gpd.GeoDataFrame:
 
     roads = roads.reset_index(drop=True)
     roads['_edge_key'] = roads.geometry.apply(_edge_key)
-    before = len(roads)
     roads = roads.drop_duplicates(subset='_edge_key').drop(columns='_edge_key')
     roads = roads.reset_index(drop=True)
-    print(f"  After filtering + dedup: {len(roads)} edges (removed {before - len(roads)} duplicates)")
 
-    # Build spatial index (used by clip operations later)
-    roads.sindex
     return roads
-
-
-def clip_roads_to_cell(all_roads: gpd.GeoDataFrame, clat: float, clon: float) -> gpd.GeoDataFrame:
-    """
-    Extract road edges that intersect a given grid cell.
-    Uses the spatial index for fast bbox filtering.
-    """
-    lat_min, lon_min, lat_max, lon_max = cell_bbox(clat, clon)
-    cell_box = box(lon_min, lat_min, lon_max, lat_max)
-
-    # Use spatial index for fast candidate selection
-    candidates_idx = list(all_roads.sindex.intersection(cell_box.bounds))
-    if not candidates_idx:
-        return gpd.GeoDataFrame(columns=all_roads.columns, crs=all_roads.crs)
-
-    candidates = all_roads.iloc[candidates_idx]
-    mask = candidates.intersects(cell_box)
-    result = candidates[mask].copy().reset_index(drop=True)
-    return result
 
 
 # ── Snap & aggregate ───────────────────────────────────────────────────────
@@ -393,11 +427,17 @@ def main():
         print(f"Error: PBF file not found: {pbf_path}")
         return
 
-    # Load everything up front
-    df_all    = load_infractions(in_path)
-    grid      = build_grid(df_all)
-    munis     = load_municipios()
-    all_roads = load_roads_from_pbf(pbf_path)
+    # Load everything up front (except roads - those are per-cell now)
+    df_all = load_infractions(in_path)
+    grid   = build_grid(df_all)
+    munis  = load_municipios()
+
+    # Verify osmium is installed before starting the loop
+    try:
+        subprocess.run(['osmium', '--version'], capture_output=True, check=True, timeout=5)
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        print("ERROR: osmium-tool is not installed. On Ubuntu: apt-get install -y osmium-tool")
+        return
 
     # Filter to a single test cell if requested
     if args.cell:
@@ -408,32 +448,35 @@ def main():
         grid = {(clat, clon): grid[(clat, clon)]}
         print(f"Single-cell mode: ({clat}, {clon})")
 
-    # Process cells
+    # Process cells (one at a time, streaming from PBF)
     all_features = []
     road_km_acc  = {}
     succeeded = skipped = 0
     cells_list = sorted(grid.items())
 
-    for i, ((clat, clon), df_cell) in enumerate(cells_list):
-        print(f"\n-- Cell ({clat:.1f}, {clon:.1f})  [{i+1}/{len(cells_list)}]  "
-              f"({len(df_cell)} pts) --")
+    with tempfile.TemporaryDirectory(prefix='street_match_') as tmp:
+        tmpdir = Path(tmp)
 
-        edges = clip_roads_to_cell(all_roads, clat, clon)
-        if edges.empty:
-            print("  No road edges in cell. Skipping.")
-            skipped += 1
-            continue
+        for i, ((clat, clon), df_cell) in enumerate(cells_list):
+            print(f"\n-- Cell ({clat:.1f}, {clon:.1f})  [{i+1}/{len(cells_list)}]  "
+                  f"({len(df_cell)} pts) --")
 
-        print(f"  {len(edges)} road edges in cell.")
+            edges = load_roads_for_cell(pbf_path, clat, clon, tmpdir)
+            if edges.empty:
+                print("  No road edges in cell. Skipping.")
+                skipped += 1
+                continue
 
-        agg, snapped, edges_proj = snap_and_aggregate(df_cell, edges, clon)
-        features = build_features(edges_proj, agg, munis)
-        all_features.extend(features)
+            print(f"  {len(edges)} road edges in cell.")
 
-        accumulate_road_lengths(edges_proj, munis, road_km_acc)
+            agg, snapped, edges_proj = snap_and_aggregate(df_cell, edges, clon)
+            features = build_features(edges_proj, agg, munis)
+            all_features.extend(features)
 
-        print(f"  {snapped}/{len(df_cell)} snapped, {len(features)} segments")
-        succeeded += 1
+            accumulate_road_lengths(edges_proj, munis, road_km_acc)
+
+            print(f"  {snapped}/{len(df_cell)} snapped, {len(features)} segments")
+            succeeded += 1
 
     print(f"\n{'='*60}")
     print(f"  Cells processed: {succeeded}")
