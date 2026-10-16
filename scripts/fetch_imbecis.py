@@ -11,10 +11,11 @@ Usage (called by GitHub Actions weekly):
 
 import json
 import os
+import sys
 import time
 import urllib.request
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 try:
@@ -32,6 +33,13 @@ API_BASE   = 'https://api.imbecis.app'
 ENDPOINT   = '/reports/confirmed'
 PAGE_SIZE  = 50      # max allowed by API
 SLEEP_S    = 1       # polite pause between pages
+RETRIES    = 3       # attempts per page before giving up
+RETRY_WAIT_S = 3     # grows with each attempt
+
+# A report is published only after enough users confirm it, so one that happened BEFORE the newest report we
+# already hold can still arrive later. Asking only for "newer than the latest occurredAt" would skip it for good.
+# So we ask for a window before the latest one; reports already held are skipped by id, so this is safe.
+OVERLAP_DAYS = 30
 
 
 # ── Spatial join ────────────────────────────────────────────────────────────
@@ -112,8 +120,39 @@ def record_to_feature(rec: dict) -> Optional[dict]:
 
 # ── API fetch ────────────────────────────────────────────────────────────────
 
-def fetch_since(from_time: Optional[str]) -> list:
-    """Fetch all confirmed reports newer than from_time. Returns raw records."""
+def overlap_start(latest: Optional[str]) -> Optional[str]:
+    """The day OVERLAP_DAYS before the latest report we hold, written the way the API wrote it."""
+    if not latest:
+        return None
+    try:
+        day = datetime.strptime(latest[:10], '%Y-%m-%d').date() - timedelta(days=OVERLAP_DAYS)
+    except ValueError:
+        return latest
+    return day.isoformat() + latest[10:]
+
+
+def get_page(url: str) -> Optional[dict]:
+    """One page of the API, retried a few times. None if it never worked."""
+    for attempt in range(1, RETRIES + 1):
+        try:
+            req = urllib.request.Request(url, headers={
+                'Accept':     'application/json',
+                'User-Agent': 'illegal-parking-portugal-map/1.0 (https://canales.github.io/illegal-parking-portugal)',
+            })
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            if data.get('success'):
+                return data
+            print(f"  ⚠ API returned an error (attempt {attempt}/{RETRIES}): {data}")
+        except Exception as e:
+            print(f"  ⚠ Request failed (attempt {attempt}/{RETRIES}): {e}")
+        if attempt < RETRIES:
+            time.sleep(RETRY_WAIT_S * attempt)
+    return None
+
+
+def fetch_since(from_time: Optional[str]):
+    """Fetch all confirmed reports newer than from_time. Returns (raw records, finished_ok)."""
     all_records = []
     page        = 1
 
@@ -125,20 +164,9 @@ def fetch_since(from_time: Optional[str]) -> list:
         url = f"{API_BASE}{ENDPOINT}?{urllib.parse.urlencode(params)}"
         print(f"  Fetching page {page}: {url}")
 
-        try:
-            req  = urllib.request.Request(url, headers={
-            'Accept':     'application/json',
-            'User-Agent': 'illegal-parking-portugal-map/1.0 (https://canales.github.io/illegal-parking-portugal)',
-        })
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-        except Exception as e:
-            print(f"  ⚠ Request failed: {e}")
-            break
-
-        if not data.get('success'):
-            print(f"  ⚠ API returned error: {data}")
-            break
+        data = get_page(url)
+        if data is None:
+            return all_records, False
 
         payload    = data.get('payload', [])
         meta       = data.get('meta', {})
@@ -153,7 +181,7 @@ def fetch_since(from_time: Optional[str]) -> list:
         page += 1
         time.sleep(SLEEP_S)
 
-    return all_records
+    return all_records, True
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -182,13 +210,15 @@ def main():
             last_occurred_at = max(dates)
 
         print(f"  Existing records: {len(existing_features)}")
-        print(f"  Fetching since:   {last_occurred_at or 'beginning'}")
+        print(f"  Latest report we hold: {last_occurred_at or 'none'}")
     else:
         print("  No existing file — fetching all records.")
 
     # Fetch new records from API
     print("\nFetching from Imbecis API...")
-    raw_records = fetch_since(last_occurred_at)
+    since = overlap_start(last_occurred_at)
+    print(f"  Fetching since:   {since or 'beginning'}  ({OVERLAP_DAYS}-day overlap, duplicates are skipped by id)")
+    raw_records, finished_ok = fetch_since(since)
     print(f"  {len(raw_records)} records returned by API.")
 
     # Convert and deduplicate
@@ -210,6 +240,9 @@ def main():
     print(f"  {len(new_features)} new, {dupes} duplicates skipped, {invalid} invalid coords.")
 
     if not new_features:
+        if not finished_ok:
+            print("\n✗ The API could not be read, so nothing could be updated.")
+            sys.exit(1)           # a non-zero exit makes the weekly run show as failed, instead of looking fine
         print("\nNo new records — nothing to update.")
         return
 
@@ -246,6 +279,9 @@ def main():
     print(f"\n✓ Saved {len(all_features)} total records → {OUT_PATH}")
     print(f"  +{len(new_features)} new this run")
     print(f"  Date range: {min(dates)[:10]} → {max(dates)[:10]}")
+    if not finished_ok:
+        print("\n✗ The API stopped answering part-way: what arrived was saved, but the update is incomplete.")
+        sys.exit(1)
 
 
 if __name__ == '__main__':
