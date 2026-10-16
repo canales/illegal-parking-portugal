@@ -80,6 +80,21 @@ jobs:
             --input data/infractions_imbecis.geojson \
             --output data/streets_imbecis.geojson
 
+      # A safety net: if anything goes wrong after this point (for example the push), the new data can still be
+      # downloaded from the "Artifacts" section at the bottom of the run page, instead of redoing the whole run.
+      - name: Keep a copy of the new data
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-data
+          path: |
+            data/infractions.geojson
+            data/streets_matched.geojson
+            data/road_network_lengths.json
+            data/infractions_imbecis.geojson
+            data/streets_imbecis.geojson
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Commit updated data
         run: |
           git config user.name  "github-actions[bot]"
@@ -89,6 +104,11 @@ jobs:
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || git commit -m "chore: weekly data update $(date -u '+%Y-%m-%d')"
+          # Anything else the run happened to change is not part of the update. List it, then set it aside:
+          # "git pull --rebase" refuses to run while tracked files have unstaged changes. (The runner is thrown away.)
+          echo "Other tracked files changed by the run (not committed):"
+          git status --short | grep -v '^??' || echo "  none"
+          git stash push --quiet || true
           # This job runs for a long time, so someone may have pushed to main in the meantime. Put our data
           # commit on top of whatever arrived (if both touched the same data file, our fresh data wins) and retry.
           for attempt in 1 2 3; do
