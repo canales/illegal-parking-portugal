@@ -580,10 +580,10 @@
         <span id="streets-toggle">▾</span>
       </div>
       <div id="streets-body">
-        <select id="streets-muni-filter" onchange="renderStreetRankings()">
+        <select id="streets-muni-filter" onchange="renderStreetRankings(true)">
           <option value="" data-i18n="streets_muni_all">— Select municipality —</option>
         </select>
-        <select id="streets-type-filter" onchange="renderStreetRankings()">
+        <select id="streets-type-filter" onchange="renderStreetRankings(true)">
           <option value="all" data-i18n="filter_all">All</option>
         </select>
         <div id="streets-list"></div>
@@ -1530,11 +1530,27 @@ async function toggleSource(source) {
     showImbecis = !showImbecis;
     document.getElementById('btn-imbecis').classList.toggle('active', showImbecis);
   }
-  // Rebuild timeline, filters and layers for new source combination
-  populateFilters();
-  initTimeline();
-  await initAllLayers();
+  // Only the data underneath changes: keep what the user has set (view, basemap, infraction type, date range,
+  // layer opacity and the street-ranking filters) and rebuild what depends on the sources.
+  const keep = {
+    opacity:    document.getElementById('opacity-slider').value,
+    streetMuni: document.getElementById('streets-muni-filter').value,
+    streetType: document.getElementById('streets-type-filter').value,
+  };
+  populateFilters();            // keeps the chosen infraction type while it exists in the data shown
+  initTimeline(true);           // keeps the chosen date range, matched by month
+  await initAllLayers();        // rebuilds the layers in the same view, with the same filters
   initStreetRankings();
+  const muniSel = document.getElementById('streets-muni-filter');
+  const typeSel = document.getElementById('streets-type-filter');
+  if ([...muniSel.options].some(o => o.value === keep.streetMuni)) muniSel.value = keep.streetMuni;
+  if ([...typeSel.options].some(o => o.value === keep.streetType)) typeSel.value = keep.streetType;
+  renderStreetRankings();       // refresh the list only: this is not a street-panel action, so the view stays put
+  if (currentView === 'heat' || currentView === 'hex') {
+    document.getElementById('opacity-slider').value = keep.opacity;
+    setLayerOpacity(keep.opacity);
+  }
+  document.getElementById('style-select').value = currentStyle;
   updateStats();
   renderUpdateBadge();
 }
@@ -1732,6 +1748,7 @@ function populateFilters() {
   typeList = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
 
   const sel = document.getElementById('filter-type');
+  Array.from(sel.options).forEach(o => { if (o.value !== 'all') o.remove(); });     // rebuild, so repeated calls never duplicate the list
   typeList.forEach(type => {
     const opt = document.createElement('option');
     opt.value = type;
@@ -1739,7 +1756,13 @@ function populateFilters() {
     opt.textContent = lbl(type);
     sel.appendChild(opt);
   });
-  sel.addEventListener('change', e => { currentType = e.target.value; applyAllFilters(); });
+  if (!sel.dataset.bound) {                                                          // one handler, however many times this runs
+    sel.addEventListener('change', e => { currentType = e.target.value; applyAllFilters(); });
+    sel.dataset.bound = '1';
+  }
+  // keep the chosen type if it still exists in the data now shown, otherwise fall back to All
+  if (currentType !== 'all' && typeList.includes(currentType)) sel.value = currentType;
+  else { currentType = 'all'; sel.value = 'all'; }
 }
 
 // Update dropdown option labels with current filtered counts
@@ -1941,7 +1964,9 @@ function updateStats(count) {
 // ════════════════════════════════════════════════════════════════════════════
 // TIMELINE (dual-handle range)
 // ════════════════════════════════════════════════════════════════════════════
-function initTimeline() {
+function initTimeline(keep = false) {
+  // When the sources change, the months on offer can change too: remember the chosen range by month name
+  const prev = keep && months.length ? { start: months[startMonthIdx], end: months[endMonthIdx], full: isFullPeriod() } : null;
   const monthSet = new Set();
   getActiveFeatures().forEach(f => {
     const m = (f.properties.occurredAt || f.properties.data_data || '').substring(0, 7);
@@ -1960,10 +1985,16 @@ function initTimeline() {
 
   const sStart = document.getElementById('slider-start');
   const sEnd   = document.getElementById('slider-end');
-  sStart.max   = max;   sStart.value = 0;
-  sEnd.max     = max;   sEnd.value   = max;
-  startMonthIdx = 0;
-  endMonthIdx   = max;
+  let s0 = 0, e0 = max;                       // by default: the whole period
+  if (prev && !prev.full) {                   // a chosen range is kept, matched by month, if it still overlaps the data
+    const first = months.findIndex(m => m >= prev.start);
+    let last = -1; months.forEach((m, i) => { if (m <= prev.end) last = i; });
+    if (first !== -1 && last !== -1 && last >= first) { s0 = first; e0 = last; }
+  }
+  sStart.max   = max;   sStart.value = s0;
+  sEnd.max     = max;   sEnd.value   = e0;
+  startMonthIdx = s0;
+  endMonthIdx   = e0;
 
   // Year tick labels
   const years = [...new Set(months.map(m => m.substring(0, 4)))];
@@ -1974,23 +2005,24 @@ function initTimeline() {
   updateTimelineLabel();
 
   // Prevent handles crossing — start can't exceed end and vice versa
-  sStart.addEventListener('input', () => {
+  // (assigned, not added, so rebuilding the timeline never stacks a second handler)
+  sStart.oninput = () => {
     if (parseInt(sStart.value) > parseInt(sEnd.value))
       sStart.value = sEnd.value;
     startMonthIdx = parseInt(sStart.value);
     updateTimelineFill();
     updateTimelineLabel();
     applyAllFilters();
-  });
+  };
 
-  sEnd.addEventListener('input', () => {
+  sEnd.oninput = () => {
     if (parseInt(sEnd.value) < parseInt(sStart.value))
       sEnd.value = sStart.value;
     endMonthIdx = parseInt(sEnd.value);
     updateTimelineFill();
     updateTimelineLabel();
     applyAllFilters();
-  });
+  };
 }
 
 function updateTimelineLabel() {
@@ -2900,15 +2932,16 @@ function flyToPoiRank(lat, lon) {
   map.flyTo({ center: [lon, lat], zoom: 17, duration: 800 });
 }
 
-function renderStreetRankings() {
+function renderStreetRankings(userAction = false) {
   if (!streetClusters) return;
   const muni       = document.getElementById('streets-muni-filter').value;
   const typeFilter = document.getElementById('streets-type-filter').value;
   const listEl     = document.getElementById('streets-list');
   const national   = !muni;   // no municipality selected = national view
 
-  // Feature 1: auto-switch to street view
-  if (currentView !== 'streets') setView('streets');
+  // Switch to the street view only when the user works with this panel (its two dropdowns or a street row),
+  // never on page load or when a date, type or source filter changes: that would throw them out of the view they chose.
+  if (userAction && currentView !== 'streets') setView('streets');
 
   // Show/hide municipality boundary
   if (muni) showMunicioBoundary(muni);
@@ -2990,6 +3023,7 @@ function renderStreetRankings() {
 
 // Fly to street bbox and open the right-side detail panel
 function flyToStreet(bbox, clusterData) {
+  if (currentView !== 'streets') setView('streets');     // a street row was clicked: show the streets
   const pad = 0.002;
   map.fitBounds(
     [[bbox[0] - pad, bbox[1] - pad], [bbox[2] + pad, bbox[3] + pad]],
