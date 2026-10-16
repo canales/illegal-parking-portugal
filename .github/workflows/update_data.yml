@@ -10,6 +10,11 @@ on:
 permissions:
   contents: write
 
+# Never run two updates at once (for example a manual run started while the Monday run is still going)
+concurrency:
+  group: update-parking-data
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -84,7 +89,16 @@ jobs:
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || git commit -m "chore: weekly data update $(date -u '+%Y-%m-%d')"
-          git push
+          # This job runs for a long time, so someone may have pushed to main in the meantime. Put our data
+          # commit on top of whatever arrived (if both touched the same data file, our fresh data wins) and retry.
+          for attempt in 1 2 3; do
+            if git pull --rebase -X theirs && git push; then exit 0; fi
+            echo "Push attempt $attempt failed, retrying..."
+            git rebase --abort 2>/dev/null || true
+            sleep 5
+          done
+          echo "::error::Could not push the updated data after 3 attempts"
+          exit 1
 
       - name: Mark the run as failed if an Imbecis step failed
         if: steps.imbecis.outcome == 'failure' || steps.imbecis_streets.outcome == 'failure'
